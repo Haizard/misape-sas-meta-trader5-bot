@@ -2386,7 +2386,8 @@ TradingSignal GenerateEnhancedSupportResistanceSignal() {
     bool level_found = false;
 
     for(int i = 0; i < g_sr_count; i++) {
-        SRLevel level = g_sr_levels[i];
+        SRLevel level;
+        level = g_sr_levels[i];
         double distance = MathAbs(current_price - level.price);
 
         // Check if price is near the level (within invalidation threshold)
@@ -2562,7 +2563,8 @@ void RemoveSRLevel(int index) {
 void CreateSRLevelVisual(int index) {
     if(index < 0 || index >= g_sr_count) return;
 
-    SRLevel level = g_sr_levels[index];
+    SRLevel level;
+    level = g_sr_levels[index];
 
     // Create horizontal line
     ObjectCreate(0, level.obj_name, OBJ_HLINE, 0, 0, level.price);
@@ -2840,7 +2842,8 @@ void ExecutePatternCleanup() {
 
     for(int i = g_pattern_count - 1; i >= 0; i--) {
         bool should_remove = false;
-        ChartPattern pattern = g_chart_patterns[i];
+        ChartPattern pattern;
+        pattern = g_chart_patterns[i];
 
         // Check expiry time
         if(current_time >= pattern.expiry_time && !pattern.is_critical) {
@@ -2912,7 +2915,8 @@ void UpdatePatternStates() {
     double current_price = iClose(_Symbol, _Period, 0);
 
     for(int i = 0; i < g_pattern_count; i++) {
-        ChartPattern pattern = g_chart_patterns[i];
+        ChartPattern pattern;
+        pattern = g_chart_patterns[i];
 
         if(pattern.state != PATTERN_STATE_ACTIVE) continue;
 
@@ -3052,7 +3056,8 @@ void RemoveExcessPatterns(ENUM_STRATEGY_TYPE strategy_type, int excess_count) {
 void RemoveChartPattern(int index) {
     if(index < 0 || index >= g_pattern_count) return;
 
-    ChartPattern pattern = g_chart_patterns[index];
+    ChartPattern pattern;
+    pattern = g_chart_patterns[index];
 
     // Remove visual object from chart
     ObjectDelete(0, pattern.object_name);
@@ -4134,7 +4139,8 @@ void UpdateStrategyCards() {
 
         // Update signal information
         if(g_strategies[i].last_signal.is_valid && g_strategy_enabled[i]) {
-            TradingSignal signal = g_strategies[i].last_signal;
+            TradingSignal signal;
+            signal = g_strategies[i].last_signal;
 
             // Signal type
             string signal_text = GetSignalTypeString(signal.signal_type);
@@ -4543,7 +4549,8 @@ void RunChartPatternStrategy() {
     DetectBatPattern();
 
     // Generate trading signal from best pattern
-    TradingSignal signal = GenerateChartPatternSignal();
+    TradingSignal signal;
+    signal = GenerateChartPatternSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_CHART_PATTERN, signal);
     }
@@ -5388,7 +5395,8 @@ void RunPinBarStrategy() {
     // Detect Pin Bar pattern on current completed bar
     if(DetectPinBarPattern()) {
         // Generate trading signal from Pin Bar
-        TradingSignal signal = GeneratePinBarSignal();
+        TradingSignal signal;
+        signal = GeneratePinBarSignal();
         if(signal.is_valid) {
             UpdateStrategySignal(STRATEGY_PIN_BAR, signal);
             // Draw Pin Bar pattern
@@ -5671,7 +5679,8 @@ void RunVWAPStrategy() {
     if(!g_vwap_data.is_valid) return;
 
     // Generate VWAP trading signals
-    TradingSignal signal = GenerateVWAPSignal();
+    TradingSignal signal;
+    signal = GenerateVWAPSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_VWAP, signal);
         if(EnableDebugLogging) {
@@ -5809,13 +5818,15 @@ TradingSignal GenerateVWAPSignal() {
 
     // Try mean reversion strategy first
     if(VWAP_UseMeanReversion) {
-        TradingSignal mean_reversion_signal = GenerateVWAPMeanReversionSignal(current_price);
+        TradingSignal mean_reversion_signal;
+        mean_reversion_signal = GenerateVWAPMeanReversionSignal(current_price);
         if(mean_reversion_signal.is_valid) return mean_reversion_signal;
     }
 
     // Try trend following strategy
     if(VWAP_UseTrendFollowing) {
-        TradingSignal trend_signal = GenerateVWAPTrendFollowingSignal(current_price);
+        TradingSignal trend_signal;
+        trend_signal = GenerateVWAPTrendFollowingSignal(current_price);
         if(trend_signal.is_valid) return trend_signal;
     }
 
