@@ -6449,7 +6449,7 @@ void ManageTrailingStops() {
         }
         
         double current_profit = PositionGetDouble(POSITION_PROFIT);
-        double position_type = PositionGetInteger(POSITION_TYPE);
+        long position_type = PositionGetInteger(POSITION_TYPE);
         double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
         double current_price = (position_type == POSITION_TYPE_BUY) ? 
                               SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
