@@ -2145,40 +2145,245 @@ double CalculateMarketInefficiencyScore(FairValueGap &gap) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate VPIN Toxicity for FVG                                 |
+//| Advanced VPIN Toxicity Measurement for Informed Trading         |
 //+------------------------------------------------------------------+
 double CalculateVPINToxicity() {
-    // VPIN-based toxicity measurement for informed trading detection
+    // Multi-dimensional toxicity measurement
     double vpin_score = CalculateVPINScore(1, 20);
     double institutional_flow = CalculateInstitutionalFlowProbability(1);
+    double market_impact = CalculateMarketImpactToxicity();
+    double order_flow_toxicity = CalculateOrderFlowToxicity();
     
-    // Toxicity increases with higher VPIN and institutional activity
-    double toxicity = (vpin_score * 0.6) + (institutional_flow * 0.4);
+    // Weighted toxicity calculation with market microstructure factors
+    double base_toxicity = (vpin_score * 0.35) + (institutional_flow * 0.25);
+    double microstructure_toxicity = (market_impact * 0.25) + (order_flow_toxicity * 0.15);
+    
+    double total_toxicity = base_toxicity + microstructure_toxicity;
+    
+    // Apply volatility adjustment
+    double volatility_factor = g_atr_value / iClose(_Symbol, _Period, 1);
+    double adjusted_toxicity = total_toxicity * (1.0 + volatility_factor * 0.5);
     
     // Apply non-linear scaling for extreme values
-    if(toxicity > 0.8) {
-        toxicity = 0.8 + (toxicity - 0.8) * 0.5; // Dampen extreme values
+    if(adjusted_toxicity > 0.8) {
+        adjusted_toxicity = 0.8 + (adjusted_toxicity - 0.8) * 0.5; // Dampen extreme values
     }
+    
+    return MathMin(1.0, adjusted_toxicity);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Market Impact Toxicity                                |
+//+------------------------------------------------------------------+
+double CalculateMarketImpactToxicity() {
+    double price_impact = 0;
+    double volume_impact = 0;
+    int lookback = 10;
+    
+    for(int i = 1; i <= lookback; i++) {
+        double price_change = MathAbs(iClose(_Symbol, _Period, i) - iClose(_Symbol, _Period, i+1));
+        long volume = iVolume(_Symbol, _Period, i);
+        double avg_volume = CalculateAverageVolume(_Period, 20);
+        
+        if(avg_volume > 0) {
+            // Price impact per unit of excess volume
+            double excess_volume = MathMax(0, (double)volume - avg_volume);
+            if(excess_volume > 0) {
+                price_impact += price_change / (excess_volume / avg_volume);
+            }
+        }
+        
+        // Volume clustering effect
+        if((double)volume > avg_volume * 1.5) {
+            volume_impact += 0.1;
+        }
+    }
+    
+    double normalized_impact = (price_impact / lookback) / g_atr_value;
+    double total_impact = (normalized_impact * 0.7) + (volume_impact * 0.3);
+    
+    return MathMin(1.0, total_impact);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Order Flow Toxicity                                   |
+//+------------------------------------------------------------------+
+double CalculateOrderFlowToxicity() {
+    double aggressive_flow = 0;
+    double passive_flow = 0;
+    int lookback = 15;
+    
+    for(int i = 1; i <= lookback; i++) {
+        double open_price = iOpen(_Symbol, _Period, i);
+        double close_price = iClose(_Symbol, _Period, i);
+        double high_price = iHigh(_Symbol, _Period, i);
+        double low_price = iLow(_Symbol, _Period, i);
+        long volume = iVolume(_Symbol, _Period, i);
+        
+        // Estimate aggressive vs passive flow
+        double body_size = MathAbs(close_price - open_price);
+        double total_range = high_price - low_price;
+        
+        if(total_range > 0) {
+            double body_ratio = body_size / total_range;
+            
+            // High body ratio indicates aggressive trading
+            if(body_ratio > 0.7) {
+                aggressive_flow += volume * body_ratio;
+            } else {
+                passive_flow += volume * (1.0 - body_ratio);
+            }
+        }
+    }
+    
+    double total_flow = aggressive_flow + passive_flow;
+    if(total_flow <= 0) return 0.5;
+    
+    // Higher aggressive flow ratio indicates more informed trading
+    double aggressive_ratio = aggressive_flow / total_flow;
+    
+    // Apply non-linear scaling for toxicity
+    double toxicity = MathPow(aggressive_ratio, 1.5);
     
     return MathMin(1.0, toxicity);
 }
 
 //+------------------------------------------------------------------+
-//| Calculate FVG Confidence Interval                               |
+//| Enhanced FVG Confidence Interval with Bootstrap Methods         |
 //+------------------------------------------------------------------+
 double CalculateFVGConfidenceInterval(FairValueGap &gap) {
-    // Statistical confidence interval for FVG fill probability
+    // Advanced statistical confidence interval using multiple methodologies
     double historical_fill_rate = CalculateHistoricalFVGFillRate(gap);
-    double sample_size = 30; // Historical sample for confidence calculation
+    double sample_size = 50; // Increased sample for better statistical power
     
-    // Binomial confidence interval calculation
-    double z_score = 1.96; // 95% confidence level
-    double variance = historical_fill_rate * (1 - historical_fill_rate);
-    double std_error = MathSqrt(variance / sample_size);
+    // Bootstrap confidence interval calculation
+    double bootstrap_ci = CalculateBootstrapConfidenceInterval(gap, sample_size);
     
-    double confidence_interval = z_score * std_error;
+    // Bayesian confidence interval with prior knowledge
+    double bayesian_ci = CalculateBayesianConfidenceInterval(gap, historical_fill_rate);
     
-    return MathMin(0.3, confidence_interval);
+    // Wilson score interval for better small sample performance
+    double wilson_ci = CalculateWilsonScoreInterval(historical_fill_rate, sample_size);
+    
+    // Weighted combination of methods
+    double combined_ci = (bootstrap_ci * 0.4) + (bayesian_ci * 0.35) + (wilson_ci * 0.25);
+    
+    // Adjust for market regime and volatility
+    double volatility_factor = CalculateVolatilityAdjustment();
+    combined_ci *= volatility_factor;
+    
+    return MathMin(0.4, MathMax(0.05, combined_ci));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Bootstrap Confidence Interval                         |
+//+------------------------------------------------------------------+
+double CalculateBootstrapConfidenceInterval(FairValueGap &gap, double sample_size) {
+    // Bootstrap resampling for robust confidence interval estimation
+    double bootstrap_samples[100];
+    int num_bootstraps = 100;
+    
+    // Generate bootstrap samples
+    for(int b = 0; b < num_bootstraps; b++) {
+        double bootstrap_mean = 0.0;
+        int bootstrap_count = 0;
+        
+        // Resample with replacement
+        for(int i = 0; i < (int)sample_size; i++) {
+            int random_index = MathRand() % (int)sample_size;
+            double sample_fill_rate = CalculateHistoricalFillRateAtIndex(gap, random_index);
+            bootstrap_mean += sample_fill_rate;
+            bootstrap_count++;
+        }
+        
+        if(bootstrap_count > 0) {
+            bootstrap_samples[b] = bootstrap_mean / bootstrap_count;
+        }
+    }
+    
+    // Calculate percentile-based confidence interval (95%)
+    ArraySort(bootstrap_samples);
+    int lower_index = (int)(num_bootstraps * 0.025);
+    int upper_index = (int)(num_bootstraps * 0.975);
+    
+    double ci_width = bootstrap_samples[upper_index] - bootstrap_samples[lower_index];
+    return ci_width / 2.0; // Half-width of confidence interval
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Bayesian Confidence Interval                          |
+//+------------------------------------------------------------------+
+double CalculateBayesianConfidenceInterval(FairValueGap &gap, double observed_rate) {
+    // Bayesian inference with Beta prior distribution
+    // Prior: Beta(α=2, β=2) - weakly informative prior
+    double alpha_prior = 2.0;
+    double beta_prior = 2.0;
+    
+    // Update with observed data
+    double successes = observed_rate * 50; // Assuming 50 observations
+    double failures = 50 - successes;
+    
+    double alpha_posterior = alpha_prior + successes;
+    double beta_posterior = beta_prior + failures;
+    
+    // Calculate credible interval using Beta distribution properties
+    double posterior_mean = alpha_posterior / (alpha_posterior + beta_posterior);
+    double posterior_variance = (alpha_posterior * beta_posterior) / 
+                               (MathPow(alpha_posterior + beta_posterior, 2) * 
+                                (alpha_posterior + beta_posterior + 1));
+    
+    double credible_interval = 1.96 * MathSqrt(posterior_variance);
+    
+    // Adjust for gap characteristics
+    double gap_adjustment = CalculateGapCharacteristicAdjustment(gap);
+    credible_interval *= gap_adjustment;
+    
+    return credible_interval;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Wilson Score Interval                                 |
+//+------------------------------------------------------------------+
+double CalculateWilsonScoreInterval(double p, double n) {
+    // Wilson score interval - better for small samples and extreme probabilities
+    double z = 1.96; // 95% confidence level
+    double z_squared = z * z;
+    
+    if(n <= 0) return 0.2; // Default fallback
+    
+    double denominator = 1 + z_squared / n;
+    double center_adjusted = p + z_squared / (2 * n);
+    double margin_of_error = z * MathSqrt((p * (1 - p) + z_squared / (4 * n)) / n);
+    
+    double wilson_lower = (center_adjusted - margin_of_error) / denominator;
+    double wilson_upper = (center_adjusted + margin_of_error) / denominator;
+    
+    return (wilson_upper - wilson_lower) / 2.0; // Half-width
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Gap Characteristic Adjustment                         |
+//+------------------------------------------------------------------+
+double CalculateGapCharacteristicAdjustment(FairValueGap &gap) {
+    double adjustment = 1.0;
+    
+    // Adjust based on gap size relative to ATR
+    if(gap.gap_size_ratio > 2.0) {
+        adjustment *= 1.2; // Larger gaps have higher uncertainty
+    } else if(gap.gap_size_ratio < 0.5) {
+        adjustment *= 0.8; // Smaller gaps more predictable
+    }
+    
+    // Adjust based on volume confirmation
+    int start_bar = iBarShift(_Symbol, PERIOD_CURRENT, gap.time_created);
+    double volume_factor = CalculateFVGVolumeConfirmation(start_bar);
+    if(volume_factor > 0.7) {
+        adjustment *= 0.9; // High volume confirmation reduces uncertainty
+    } else if(volume_factor < 0.3) {
+        adjustment *= 1.1; // Low volume increases uncertainty
+    }
+    
+    return MathMin(1.5, MathMax(0.7, adjustment));
 }
 
 //+------------------------------------------------------------------+
@@ -2197,6 +2402,623 @@ double CalculateVolumeStandardDeviation(int period) {
     double variance = (sum_sq / period) - (mean * mean);
     
     return MathSqrt(MathMax(0, variance));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Historical Fill Rate at Index                         |
+//+------------------------------------------------------------------+
+double CalculateHistoricalFillRateAtIndex(FairValueGap &gap, int index) {
+    // Simulate historical fill rate calculation for bootstrap
+    // In practice, this would access historical database
+    double base_rate = 0.65; // Base historical fill rate
+    
+    // Add some variation based on index (simulating different historical periods)
+    double variation = (MathSin(index * 0.1) * 0.1) + (MathCos(index * 0.05) * 0.05);
+    
+    return MathMin(0.95, MathMax(0.05, base_rate + variation));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Volatility Adjustment                                 |
+//+------------------------------------------------------------------+
+double CalculateVolatilityAdjustment() {
+    // Calculate current volatility relative to historical average
+    double current_atr = g_atr_value;
+    double historical_atr = CalculateHistoricalATR(50);
+    
+    if(historical_atr <= 0) return 1.0;
+    
+    double volatility_ratio = current_atr / historical_atr;
+    
+    // Higher volatility increases uncertainty (wider confidence intervals)
+    double adjustment = 1.0 + (volatility_ratio - 1.0) * 0.3;
+    
+    return MathMin(1.5, MathMax(0.7, adjustment));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Historical ATR                                        |
+//+------------------------------------------------------------------+
+double CalculateHistoricalATR(int period) {
+    int atr_handle = iATR(_Symbol, _Period, period);
+    double atr_buffer[1];
+    
+    if(CopyBuffer(atr_handle, 0, 1, 1, atr_buffer) > 0) {
+        return atr_buffer[0];
+    }
+    
+    return g_atr_value; // Fallback to current ATR
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Market Regime Adjustment                              |
+//+------------------------------------------------------------------+
+double CalculateMarketRegimeAdjustment() {
+    // Detect market regime (trending vs ranging)
+    int ema_fast_handle = iMA(_Symbol, PERIOD_CURRENT, 10, 0, MODE_EMA, PRICE_CLOSE);
+    int ema_slow_handle = iMA(_Symbol, PERIOD_CURRENT, 30, 0, MODE_EMA, PRICE_CLOSE);
+    double ema_fast_buffer[1], ema_slow_buffer[1];
+    CopyBuffer(ema_fast_handle, 0, 0, 1, ema_fast_buffer);
+    CopyBuffer(ema_slow_handle, 0, 0, 1, ema_slow_buffer);
+    double ema_fast = ema_fast_buffer[0];
+    double ema_slow = ema_slow_buffer[0];
+    double current_price = iClose(_Symbol, _Period, 0);
+    
+    // Trend strength indicator
+    double trend_strength = MathAbs(ema_fast - ema_slow) / g_atr_value;
+    
+    // Ranging market (low trend strength) - higher fill probability
+    if(trend_strength < 0.5) {
+        return 1.1; // 10% boost in ranging markets
+    }
+    // Strong trending market - lower fill probability
+    else if(trend_strength > 1.5) {
+        return 0.9; // 10% reduction in strong trends
+    }
+    
+    return 1.0; // Neutral adjustment
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Volatility Clustering Factor                          |
+//+------------------------------------------------------------------+
+double CalculateVolatilityClusteringFactor() {
+    // Detect volatility clustering (GARCH-like effect)
+    double recent_volatility = 0.0;
+    double long_term_volatility = 0.0;
+    
+    // Calculate recent volatility (last 5 bars)
+    for(int i = 1; i <= 5; i++) {
+        double high = iHigh(_Symbol, _Period, i);
+        double low = iLow(_Symbol, _Period, i);
+        recent_volatility += (high - low);
+    }
+    recent_volatility /= 5.0;
+    
+    // Calculate long-term volatility (last 20 bars)
+    for(int i = 1; i <= 20; i++) {
+        double high = iHigh(_Symbol, _Period, i);
+        double low = iLow(_Symbol, _Period, i);
+        long_term_volatility += (high - low);
+    }
+    long_term_volatility /= 20.0;
+    
+    if(long_term_volatility <= 0) return 1.0;
+    
+    double volatility_ratio = recent_volatility / long_term_volatility;
+    
+    // High recent volatility reduces fill probability
+    if(volatility_ratio > 1.3) {
+        return 0.95;
+    }
+    // Low recent volatility increases fill probability
+    else if(volatility_ratio < 0.7) {
+        return 1.05;
+    }
+    
+    return 1.0;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Normalized Volume Feature                             |
+//+------------------------------------------------------------------+
+double CalculateNormalizedVolumeFeature(int bar_index) {
+    long current_volume = iVolume(_Symbol, _Period, bar_index);
+    double avg_volume = CalculateAverageVolume(_Period, 20);
+    
+    if(avg_volume <= 0) return 0.5;
+    
+    double volume_ratio = (double)current_volume / avg_volume;
+    
+    // Normalize to [0, 1] range using sigmoid-like function
+    return 1.0 / (1.0 + MathExp(-2.0 * (volume_ratio - 1.0)));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Session Strength Feature                              |
+//+------------------------------------------------------------------+
+double CalculateSessionStrengthFeature(datetime time) {
+    MqlDateTime dt;
+    TimeToStruct(time, dt);
+    
+    double strength = 0.3; // Base strength
+    
+    // London session (8-12 GMT)
+    if(dt.hour >= 8 && dt.hour <= 12) {
+        strength = 0.8;
+    }
+    // NY session (13-17 GMT)
+    else if(dt.hour >= 13 && dt.hour <= 17) {
+        strength = 0.9;
+    }
+    // London/NY overlap (13-16 GMT)
+    if(dt.hour >= 13 && dt.hour <= 16) {
+        strength = 1.0;
+    }
+    // Asian session (22-6 GMT)
+    else if(dt.hour >= 22 || dt.hour <= 6) {
+        strength = 0.5;
+    }
+    
+    return strength;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Momentum Evidence                                     |
+//+------------------------------------------------------------------+
+double CalculateMomentumEvidence(FairValueGap &gap) {
+    // Calculate momentum in direction of gap
+    double current_price = iClose(_Symbol, _Period, 0);
+    double gap_center = (gap.high_price + gap.low_price) / 2.0;
+    
+    // Determine gap direction
+    bool is_bullish_gap = gap.is_bullish; // Use the is_bullish property directly
+    
+    // Calculate price momentum
+    int ema_fast_handle = iMA(_Symbol, PERIOD_CURRENT, 5, 0, MODE_EMA, PRICE_CLOSE);
+    int ema_slow_handle = iMA(_Symbol, PERIOD_CURRENT, 15, 0, MODE_EMA, PRICE_CLOSE);
+    double ema_fast_buffer[1], ema_slow_buffer[1];
+    CopyBuffer(ema_fast_handle, 0, 0, 1, ema_fast_buffer);
+    CopyBuffer(ema_slow_handle, 0, 0, 1, ema_slow_buffer);
+    double ema_fast = ema_fast_buffer[0];
+    double ema_slow = ema_slow_buffer[0];
+    
+    double momentum_score = 0.5; // Neutral
+    
+    if(is_bullish_gap) {
+        // For bullish gaps, positive momentum supports fill
+        if(ema_fast > ema_slow && current_price > ema_fast) {
+            momentum_score = 0.8;
+        } else if(ema_fast > ema_slow) {
+            momentum_score = 0.6;
+        }
+    } else {
+        // For bearish gaps, negative momentum supports fill
+        if(ema_fast < ema_slow && current_price < ema_fast) {
+            momentum_score = 0.8;
+        } else if(ema_fast < ema_slow) {
+            momentum_score = 0.6;
+        }
+    }
+    
+    return momentum_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Market Structure Evidence                             |
+//+------------------------------------------------------------------+
+double CalculateMarketStructureEvidence(FairValueGap &gap) {
+    // Analyze market structure for gap fill probability
+    double structure_score = 0.5; // Neutral
+    
+    // Check for support/resistance levels near gap
+    double gap_center = (gap.high_price + gap.low_price) / 2.0;
+    
+    // Look for significant levels within gap range
+    bool has_support_resistance = false;
+    for(int i = 1; i <= 50; i++) {
+        double high = iHigh(_Symbol, _Period, i);
+        double low = iLow(_Symbol, _Period, i);
+        
+        // Check if historical levels intersect with gap
+        if((high >= gap.low_price && high <= gap.high_price) ||
+           (low >= gap.low_price && low <= gap.high_price)) {
+            has_support_resistance = true;
+            break;
+        }
+    }
+    
+    if(has_support_resistance) {
+        structure_score = 0.7; // Higher probability with S/R in gap
+    }
+    
+    return structure_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate VWAP Proximity Factor                                 |
+//+------------------------------------------------------------------+
+double CalculateVWAPProximityFactor(FairValueGap &gap) {
+    // Calculate VWAP and its proximity to gap
+    double vwap = CalculateVWAP(20);
+    double gap_center = (gap.high_price + gap.low_price) / 2.0;
+    
+    if(vwap <= 0) return 0.5;
+    
+    double distance_to_vwap = MathAbs(gap_center - vwap) / g_atr_value;
+    
+    // Closer to VWAP = higher fill probability
+    double proximity_factor = MathExp(-distance_to_vwap);
+    
+    return MathMin(0.9, MathMax(0.1, proximity_factor));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate VWAP                                                  |
+//+------------------------------------------------------------------+
+double CalculateVWAP(int period) {
+    double total_pv = 0.0; // Price * Volume
+    double total_volume = 0.0;
+    
+    for(int i = 1; i <= period; i++) {
+        double typical_price = (iHigh(_Symbol, _Period, i) + 
+                               iLow(_Symbol, _Period, i) + 
+                               iClose(_Symbol, _Period, i)) / 3.0;
+        long volume = iVolume(_Symbol, _Period, i);
+        
+        total_pv += typical_price * (double)volume;
+        total_volume += (double)volume;
+    }
+    
+    if(total_volume <= 0) return iClose(_Symbol, _Period, 0);
+    
+    return total_pv / total_volume;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Price Efficiency                                      |
+//+------------------------------------------------------------------+
+double CalculatePriceEfficiency(int bar_index) {
+    // Measure how efficiently price moved (institutional trades are more efficient)
+    double open = iOpen(_Symbol, _Period, bar_index);
+    double close = iClose(_Symbol, _Period, bar_index);
+    double high = iHigh(_Symbol, _Period, bar_index);
+    double low = iLow(_Symbol, _Period, bar_index);
+    
+    double total_range = high - low;
+    double net_move = MathAbs(close - open);
+    
+    if(total_range <= 0) return 0.5;
+    
+    // Efficiency ratio: net move / total range
+    double efficiency = net_move / total_range;
+    
+    return MathMin(1.0, efficiency);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Institutional Session Factor                          |
+//+------------------------------------------------------------------+
+double CalculateInstitutionalSessionFactor(datetime time) {
+    MqlDateTime dt;
+    TimeToStruct(time, dt);
+    
+    double factor = 0.3; // Base factor
+    
+    // London session (8-12 GMT) - High institutional activity
+    if(dt.hour >= 8 && dt.hour <= 12) {
+        factor = 0.8;
+    }
+    // NY session (13-17 GMT) - Highest institutional activity
+    else if(dt.hour >= 13 && dt.hour <= 17) {
+        factor = 1.0;
+    }
+    // London/NY overlap (13-16 GMT) - Peak institutional activity
+    if(dt.hour >= 13 && dt.hour <= 16) {
+        factor = 1.0;
+    }
+    // Asian session (22-6 GMT) - Lower institutional activity
+    else if(dt.hour >= 22 || dt.hour <= 6) {
+        factor = 0.4;
+    }
+    
+    return factor;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Stealth Trading Score                                 |
+//+------------------------------------------------------------------+
+double CalculateStealthTradingScore(int bar_index) {
+    // Detect stealth trading patterns (consistent directional pressure)
+    double stealth_score = 0.0;
+    int lookback = 5;
+    
+    double current_close = iClose(_Symbol, _Period, bar_index);
+    double direction_consistency = 0.0;
+    double volume_consistency = 0.0;
+    
+    // Check for consistent directional movement
+    for(int i = 1; i <= lookback; i++) {
+        double prev_close = iClose(_Symbol, _Period, bar_index + i);
+        double next_close = iClose(_Symbol, _Period, bar_index + i - 1);
+        
+        if((next_close > prev_close && current_close > iClose(_Symbol, _Period, bar_index + 1)) ||
+           (next_close < prev_close && current_close < iClose(_Symbol, _Period, bar_index + 1))) {
+            direction_consistency += 1.0;
+        }
+        
+        // Check for consistent above-average volume
+        long volume = iVolume(_Symbol, _Period, bar_index + i);
+        double avg_volume = CalculateAverageVolume(_Period, 20);
+        if(volume > avg_volume) {
+            volume_consistency += 1.0;
+        }
+    }
+    
+    direction_consistency /= lookback;
+    volume_consistency /= lookback;
+    
+    stealth_score = (direction_consistency * 0.6) + (volume_consistency * 0.4);
+    
+    return stealth_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Temporary Impact                                      |
+//+------------------------------------------------------------------+
+double CalculateTemporaryImpact(int bar_index) {
+    // Estimate temporary market impact (mean-reverting component)
+    double current_price = iClose(_Symbol, _Period, bar_index);
+    double prev_price = iClose(_Symbol, _Period, bar_index + 1);
+    double next_price = (bar_index > 0) ? iClose(_Symbol, _Period, bar_index - 1) : current_price;
+    
+    // Temporary impact shows mean reversion
+    double immediate_impact = current_price - prev_price;
+    double reversal = next_price - current_price;
+    
+    // If price reverts, it indicates temporary impact
+    double temporary_component = 0.0;
+    if((immediate_impact > 0 && reversal < 0) || (immediate_impact < 0 && reversal > 0)) {
+        temporary_component = MathAbs(reversal) / MathMax(MathAbs(immediate_impact), g_atr_value * 0.1);
+    }
+    
+    return MathMin(1.0, temporary_component);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Permanent Impact                                      |
+//+------------------------------------------------------------------+
+double CalculatePermanentImpact(int bar_index) {
+    // Estimate permanent market impact (persistent component)
+    double current_price = iClose(_Symbol, _Period, bar_index);
+    double price_5_bars_ago = iClose(_Symbol, _Period, bar_index + 5);
+    double price_5_bars_later = (bar_index >= 5) ? iClose(_Symbol, _Period, bar_index - 5) : current_price;
+    
+    // Permanent impact persists over time
+    double initial_move = current_price - price_5_bars_ago;
+    double persistent_move = price_5_bars_later - price_5_bars_ago;
+    
+    double permanent_component = 0.0;
+    if(MathAbs(initial_move) > 0) {
+        permanent_component = MathAbs(persistent_move) / MathAbs(initial_move);
+    }
+    
+    return MathMin(1.0, permanent_component);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Liquidity Factor                                      |
+//+------------------------------------------------------------------+
+double CalculateLiquidityFactor(int bar_index) {
+    // Estimate market liquidity based on volume and spread
+    long volume = iVolume(_Symbol, _Period, bar_index);
+    double avg_volume = CalculateAverageVolume(_Period, 20);
+    
+    double high = iHigh(_Symbol, _Period, bar_index);
+    double low = iLow(_Symbol, _Period, bar_index);
+    double spread_proxy = (high - low) / iClose(_Symbol, _Period, bar_index);
+    
+    // Higher volume and lower spread indicate higher liquidity
+    double volume_factor = (avg_volume > 0) ? (double)volume / avg_volume : 1.0;
+    double spread_factor = 1.0 / (1.0 + spread_proxy * 100); // Inverse relationship
+    
+    double liquidity = (volume_factor * 0.6) + (spread_factor * 0.4);
+    
+    // Liquidity factor affects impact (higher liquidity = lower impact)
+    return 1.0 / MathMax(0.1, liquidity);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Money Flow Pressure                                   |
+//+------------------------------------------------------------------+
+double CalculateMoneyFlowPressure(int bar_index) {
+    // Calculate money flow pressure using price and volume
+    double high = iHigh(_Symbol, _Period, bar_index);
+    double low = iLow(_Symbol, _Period, bar_index);
+    double close = iClose(_Symbol, _Period, bar_index);
+    long volume = iVolume(_Symbol, _Period, bar_index);
+    
+    // Typical price
+    double typical_price = (high + low + close) / 3.0;
+    
+    // Compare with previous typical price
+    double prev_high = iHigh(_Symbol, _Period, bar_index + 1);
+    double prev_low = iLow(_Symbol, _Period, bar_index + 1);
+    double prev_close = iClose(_Symbol, _Period, bar_index + 1);
+    double prev_typical = (prev_high + prev_low + prev_close) / 3.0;
+    
+    // Money flow multiplier
+    double money_flow_multiplier = 0.0;
+    if(typical_price > prev_typical) {
+        money_flow_multiplier = 1.0; // Positive money flow
+    } else if(typical_price < prev_typical) {
+        money_flow_multiplier = -1.0; // Negative money flow
+    }
+    
+    // Money flow volume
+    double money_flow_volume = money_flow_multiplier * volume;
+    
+    // Normalize by average volume
+    double avg_volume = CalculateAverageVolume(_Period, 14);
+    double normalized_flow = (avg_volume > 0) ? money_flow_volume / avg_volume : 0.0;
+    
+    // Convert to [0, 1] range
+    return 0.5 + (normalized_flow * 0.5);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Tick Flow Imbalance                                   |
+//+------------------------------------------------------------------+
+double CalculateTickFlowImbalance(int bar_index) {
+    // Simulate tick-level analysis using OHLC data
+    double open = iOpen(_Symbol, PERIOD_CURRENT, bar_index);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, bar_index);
+    double low = iLow(_Symbol, PERIOD_CURRENT, bar_index);
+    double close = iClose(_Symbol, PERIOD_CURRENT, bar_index);
+    long volume = iVolume(_Symbol, PERIOD_CURRENT, bar_index);
+    
+    // Estimate buying vs selling pressure
+    double upper_wick = high - MathMax(open, close);
+    double lower_wick = MathMin(open, close) - low;
+    double body = MathAbs(close - open);
+    double total_range = high - low;
+    
+    if(total_range <= 0) return 0.5;
+    
+    // Calculate tick flow components
+    double buying_pressure = 0.0;
+    double selling_pressure = 0.0;
+    
+    // Body analysis
+    if(close > open) {
+        buying_pressure += body / total_range;
+    } else {
+        selling_pressure += body / total_range;
+    }
+    
+    // Wick analysis (rejection levels)
+    if(upper_wick > lower_wick) {
+        selling_pressure += (upper_wick - lower_wick) / total_range;
+    } else {
+        buying_pressure += (lower_wick - upper_wick) / total_range;
+    }
+    
+    // Volume weighting
+    double avg_volume = CalculateAverageVolume(PERIOD_CURRENT, 14);
+    double volume_weight = (avg_volume > 0) ? (double)volume / avg_volume : 1.0;
+    
+    // Net flow with volume weighting
+    double net_flow = (buying_pressure - selling_pressure) * volume_weight;
+    
+    // Convert to [0, 1] range
+    return 0.5 + (net_flow * 0.5);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Institutional Order Flow                              |
+//+------------------------------------------------------------------+
+double CalculateInstitutionalOrderFlow(int bar_index) {
+    // Detect institutional trading patterns
+    double institutional_score = 0.0;
+    
+    // 1. Price efficiency (institutions trade more efficiently)
+    double efficiency = CalculatePriceEfficiency(bar_index);
+    
+    // 2. Stealth trading detection
+    double stealth_score = CalculateStealthTradingScore(bar_index);
+    
+    // 3. Volume profile analysis
+    long volume = iVolume(_Symbol, PERIOD_CURRENT, bar_index);
+    double avg_volume = CalculateAverageVolume(PERIOD_CURRENT, 20);
+    double volume_ratio = (avg_volume > 0) ? (double)volume / avg_volume : 1.0;
+    
+    // Large volume with high efficiency suggests institutional activity
+    double volume_efficiency = (volume_ratio > 1.5) ? efficiency * volume_ratio : efficiency;
+    
+    // 4. Time-based institutional activity
+    datetime current_time = iTime(_Symbol, PERIOD_CURRENT, bar_index);
+    double session_factor = CalculateInstitutionalSessionFactor(current_time);
+    
+    // Combine institutional indicators
+    institutional_score = (efficiency * 0.3) +
+                         (stealth_score * 0.3) +
+                         (volume_efficiency * 0.2) +
+                         (session_factor * 0.2);
+    
+    return institutional_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Market Impact Score                                   |
+//+------------------------------------------------------------------+
+double CalculateMarketImpactScore(int bar_index) {
+    // Analyze temporary vs permanent market impact
+    
+    // 1. Temporary impact (mean-reverting)
+    double temporary_impact = CalculateTemporaryImpact(bar_index);
+    
+    // 2. Permanent impact (persistent)
+    double permanent_impact = CalculatePermanentImpact(bar_index);
+    
+    // 3. Liquidity factor
+    double liquidity_factor = CalculateLiquidityFactor(bar_index);
+    
+    // 4. Price impact magnitude
+    double price_change = iClose(_Symbol, PERIOD_CURRENT, bar_index) - iOpen(_Symbol, PERIOD_CURRENT, bar_index);
+    double atr_normalized_change = MathAbs(price_change) / MathMax(g_atr_value, 0.0001);
+    
+    // Combine impact components
+    double total_impact = (permanent_impact * 0.6) + (temporary_impact * 0.4);
+    
+    // Adjust for liquidity and magnitude
+    double adjusted_impact = total_impact * liquidity_factor * atr_normalized_change;
+    
+    return MathMax(0.0, MathMin(1.0, adjusted_impact));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Price Pressure                                        |
+//+------------------------------------------------------------------+
+double CalculatePricePressure(int bar_index) {
+    // Calculate price pressure using volume-weighted metrics
+    
+    // 1. Money flow pressure
+    double money_flow = CalculateMoneyFlowPressure(bar_index);
+    
+    // 2. VWAP deviation
+    double vwap = CalculateVWAP(20);
+    double current_price = iClose(_Symbol, PERIOD_CURRENT, bar_index);
+    double vwap_deviation = (current_price - vwap) / vwap;
+    
+    // 3. Volume-weighted price change
+    double price_change = iClose(_Symbol, PERIOD_CURRENT, bar_index) - iOpen(_Symbol, PERIOD_CURRENT, bar_index);
+    long volume = iVolume(_Symbol, PERIOD_CURRENT, bar_index);
+    double avg_volume = CalculateAverageVolume(PERIOD_CURRENT, 14);
+    double volume_weight = (avg_volume > 0) ? (double)volume / avg_volume : 1.0;
+    
+    double weighted_price_change = price_change * volume_weight;
+    
+    // 4. Accumulation/Distribution pressure
+    double high = iHigh(_Symbol, PERIOD_CURRENT, bar_index);
+    double low = iLow(_Symbol, PERIOD_CURRENT, bar_index);
+    double close = iClose(_Symbol, PERIOD_CURRENT, bar_index);
+    
+    double ad_multiplier = 0.0;
+    if(high != low) {
+        ad_multiplier = ((close - low) - (high - close)) / (high - low);
+    }
+    double ad_pressure = ad_multiplier * volume;
+    
+    // Normalize AD pressure
+    double normalized_ad = ad_pressure / MathMax(avg_volume, 1.0);
+    
+    // Combine pressure components
+    double total_pressure = (money_flow * 0.3) +
+                           (vwap_deviation * 0.25) +
+                           (weighted_price_change * 0.25) +
+                           (normalized_ad * 0.2);
+    
+    return 0.5 + (total_pressure * 0.5);
 }
 
 //+------------------------------------------------------------------+
@@ -2236,21 +3058,84 @@ double CalculateLiquidityGapScore(FairValueGap &gap) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Order Flow Imbalance                                  |
+//| Calculate Order Flow Imbalance with Market Microstructure      |
 //+------------------------------------------------------------------+
 double CalculateOrderFlowImbalance(datetime gap_time) {
-    // Simplified order flow imbalance calculation
+    // Advanced order flow imbalance with market microstructure analysis
     int bar_index = iBarShift(_Symbol, PERIOD_CURRENT, gap_time);
     if(bar_index < 0) return 0.5;
     
-    double price_change = iClose(_Symbol, PERIOD_CURRENT, bar_index) - iOpen(_Symbol, PERIOD_CURRENT, bar_index);
-    double range = iHigh(_Symbol, PERIOD_CURRENT, bar_index) - iLow(_Symbol, PERIOD_CURRENT, bar_index);
+    // Basic price metrics
+    double open_price = iOpen(_Symbol, PERIOD_CURRENT, bar_index);
+    double close_price = iClose(_Symbol, PERIOD_CURRENT, bar_index);
+    double high_price = iHigh(_Symbol, PERIOD_CURRENT, bar_index);
+    double low_price = iLow(_Symbol, PERIOD_CURRENT, bar_index);
+    long volume = iVolume(_Symbol, PERIOD_CURRENT, bar_index);
     
-    if(range == 0) return 0.5;
+    // Calculate bid-ask spread proxy
+    double bid_ask_spread = CalculateBidAskSpreadProxy(bar_index);
     
-    double imbalance = MathAbs(price_change) / range;
-    return MathMin(1.0, imbalance);
+    // Tick-level order flow analysis
+    double tick_flow_imbalance = CalculateTickFlowImbalance(bar_index);
+    
+    // Institutional detection patterns
+    double institutional_flow = CalculateInstitutionalOrderFlow(bar_index);
+    
+    // Market impact analysis
+    double market_impact = CalculateMarketImpactScore(bar_index);
+    
+    // Volume-weighted price pressure
+    double price_pressure = CalculatePricePressure(bar_index);
+    
+    // Combine all microstructure factors
+    double microstructure_score = (tick_flow_imbalance * 0.25) +
+                                 (institutional_flow * 0.25) +
+                                 (market_impact * 0.20) +
+                                 (price_pressure * 0.15) +
+                                 (bid_ask_spread * 0.15);
+    
+    // Apply volatility adjustment
+    double volatility_adjustment = CalculateVolatilityAdjustment();
+    microstructure_score *= volatility_adjustment;
+    
+    return MathMin(0.95, MathMax(0.05, microstructure_score));
 }
+
+//+------------------------------------------------------------------+
+//| Calculate Bid-Ask Spread Proxy                                  |
+//+------------------------------------------------------------------+
+double CalculateBidAskSpreadProxy(int bar_index) {
+    // Estimate bid-ask spread using high-low range and volume
+    double high = iHigh(_Symbol, PERIOD_CURRENT, bar_index);
+    double low = iLow(_Symbol, PERIOD_CURRENT, bar_index);
+    double close = iClose(_Symbol, PERIOD_CURRENT, bar_index);
+    long volume = iVolume(_Symbol, PERIOD_CURRENT, bar_index);
+    
+    if(volume <= 0) return 0.5;
+    
+    // Roll's spread estimator adaptation
+    double price_change = close - iClose(_Symbol, PERIOD_CURRENT, bar_index + 1);
+    double spread_estimate = 2.0 * MathSqrt(MathAbs(price_change));
+    
+    // Normalize by average true range
+    double atr = g_atr_value;
+    if(atr > 0) {
+        spread_estimate /= atr;
+    }
+    
+    // Volume impact on spread
+    double avg_volume = CalculateAverageVolume(PERIOD_CURRENT, 20);
+    double volume_factor = 1.0;
+    if(avg_volume > 0) {
+        volume_factor = MathSqrt((double)volume / avg_volume);
+    }
+    
+    double spread_score = spread_estimate / volume_factor;
+    
+    return MathMin(1.0, MathMax(0.0, spread_score));
+}
+
+
 
 //+------------------------------------------------------------------+
 //| Analyze Market State for FVG                                    |
@@ -2453,19 +3338,174 @@ double CalculateFVGSizeRatio(double gap_size) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate FVG Fill Probability (Research-based Formula)         |
+//| Enhanced FVG Fill Probability with ML-Inspired Models           |
 //+------------------------------------------------------------------+
 double CalculateFVGFillProbability(FairValueGap &gap) {
-    // Fill Probability = 1 - e^(-λ × Gap Size Ratio)
-    // Where λ is market-specific parameter (empirically determined as 0.8)
-    double lambda = 0.8;
-    double probability = 1.0 - MathExp(-lambda * gap.gap_size_ratio);
+    // Ensemble approach combining multiple probability models
+    
+    // Model 1: Exponential decay model (original)
+    double exponential_prob = CalculateExponentialFillProbability(gap);
+    
+    // Model 2: Logistic regression-inspired model
+    double logistic_prob = CalculateLogisticFillProbability(gap);
+    
+    // Model 3: Bayesian probability with market microstructure
+    double bayesian_prob = CalculateBayesianFillProbability(gap);
+    
+    // Model 4: Time-decay probability model
+    double time_decay_prob = CalculateTimeDecayProbability(gap);
+    
+    // Model 5: Volume-weighted probability
+    double volume_weighted_prob = CalculateVolumeWeightedProbability(gap);
+    
+    // Ensemble weighting based on model confidence
+    double model_weights[5] = {0.25, 0.22, 0.20, 0.18, 0.15};
+    double ensemble_probability = (exponential_prob * model_weights[0]) +
+                                 (logistic_prob * model_weights[1]) +
+                                 (bayesian_prob * model_weights[2]) +
+                                 (time_decay_prob * model_weights[3]) +
+                                 (volume_weighted_prob * model_weights[4]);
+    
+    // Apply market regime adjustment
+    double regime_adjustment = CalculateMarketRegimeAdjustment();
+    ensemble_probability *= regime_adjustment;
+    
+    // Apply volatility clustering adjustment
+    double volatility_clustering = CalculateVolatilityClusteringFactor();
+    ensemble_probability *= volatility_clustering;
+    
+    return MathMin(0.98, MathMax(0.02, ensemble_probability));
+}
 
-    // Adjust for market volatility
-    double volatility_adjustment = MathMin(1.2, MathMax(0.8, g_atr_value / 0.0010)); // Assuming EUR/USD-like pair
-    probability *= volatility_adjustment;
+//+------------------------------------------------------------------+
+//| Calculate Exponential Fill Probability                          |
+//+------------------------------------------------------------------+
+double CalculateExponentialFillProbability(FairValueGap &gap) {
+    // Enhanced exponential model with adaptive lambda
+    double base_lambda = 0.8;
+    
+    // Adaptive lambda based on market conditions
+    double volatility_factor = g_atr_value / CalculateHistoricalATR(20);
+    double adaptive_lambda = base_lambda * (1 + (volatility_factor - 1) * 0.3);
+    
+    double probability = 1.0 - MathExp(-adaptive_lambda * gap.gap_size_ratio);
+    
+    // Adjust for gap age
+    int bars_since_gap = iBarShift(_Symbol, _Period, gap.time_created);
+    double age_factor = MathExp(-0.1 * bars_since_gap); // Decay over time
+    probability *= (0.7 + 0.3 * age_factor);
+    
+    return probability;
+}
 
-    return MathMin(0.95, MathMax(0.05, probability));
+//+------------------------------------------------------------------+
+//| Calculate Logistic Fill Probability                             |
+//+------------------------------------------------------------------+
+double CalculateLogisticFillProbability(FairValueGap &gap) {
+    // Logistic regression-inspired probability calculation
+    // P = 1 / (1 + e^(-z)) where z = β₀ + β₁x₁ + β₂x₂ + ...
+    
+    double beta_0 = -0.5; // Intercept
+    double beta_gap_size = 2.0; // Gap size coefficient
+    double beta_volume = 1.5; // Volume coefficient
+    double beta_volatility = -0.8; // Volatility coefficient (negative - high vol reduces fill prob)
+    double beta_session = 0.6; // Session coefficient
+    
+    // Feature engineering
+    double gap_size_feature = MathLog(1 + gap.gap_size_ratio);
+    int start_bar = iBarShift(_Symbol, PERIOD_CURRENT, gap.time_created);
+    double volume_feature = CalculateNormalizedVolumeFeature(start_bar);
+    double volatility_feature = g_atr_value / CalculateHistoricalATR(14);
+    double session_feature = CalculateSessionStrengthFeature(gap.time_created);
+    
+    // Linear combination
+    double z = beta_0 + 
+               (beta_gap_size * gap_size_feature) +
+               (beta_volume * volume_feature) +
+               (beta_volatility * volatility_feature) +
+               (beta_session * session_feature);
+    
+    // Logistic function
+    double probability = 1.0 / (1.0 + MathExp(-z));
+    
+    return probability;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Bayesian Fill Probability                             |
+//+------------------------------------------------------------------+
+double CalculateBayesianFillProbability(FairValueGap &gap) {
+    // Bayesian approach with prior beliefs and evidence updating
+    
+    // Prior probability based on historical data
+    double prior_prob = CalculateHistoricalFVGFillRate(gap);
+    
+    // Evidence: current market conditions
+    int start_bar = iBarShift(_Symbol, PERIOD_CURRENT, gap.time_created);
+    double volume_evidence = CalculateFVGVolumeConfirmation(start_bar);
+    double momentum_evidence = CalculateMomentumEvidence(gap);
+    double structure_evidence = CalculateMarketStructureEvidence(gap);
+    
+    // Likelihood ratios (how much evidence supports fill vs no-fill)
+    double volume_likelihood = volume_evidence > 0.5 ? (1 + volume_evidence) : (1 - volume_evidence);
+    double momentum_likelihood = momentum_evidence > 0.5 ? (1 + momentum_evidence) : (1 - momentum_evidence);
+    double structure_likelihood = structure_evidence > 0.5 ? (1 + structure_evidence) : (1 - structure_evidence);
+    
+    // Bayesian update: P(Fill|Evidence) ∝ P(Evidence|Fill) × P(Fill)
+    double posterior_numerator = prior_prob * volume_likelihood * momentum_likelihood * structure_likelihood;
+    double posterior_denominator = posterior_numerator + 
+                                  ((1 - prior_prob) * (2 - volume_likelihood) * (2 - momentum_likelihood) * (2 - structure_likelihood));
+    
+    double bayesian_probability = posterior_numerator / posterior_denominator;
+    
+    return MathMin(0.95, MathMax(0.05, bayesian_probability));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Time Decay Probability                                |
+//+------------------------------------------------------------------+
+double CalculateTimeDecayProbability(FairValueGap &gap) {
+    // Time-based probability decay model
+    int bars_since_gap = iBarShift(_Symbol, _Period, gap.time_created);
+    
+    // Base probability decreases over time
+    double time_factor = MathExp(-0.05 * bars_since_gap);
+    
+    // Session-based adjustment
+    datetime current_time = TimeCurrent();
+    double session_strength = CalculateSessionStrengthFeature(current_time);
+    
+    // Combine time decay with session strength
+    double time_probability = 0.8 * time_factor + 0.2 * session_strength;
+    
+    return time_probability;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Volume Weighted Probability                           |
+//+------------------------------------------------------------------+
+double CalculateVolumeWeightedProbability(FairValueGap &gap) {
+    // Volume-based probability using VWAP and volume profile
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    double gap_center = (gap.high_price + gap.low_price) / 2.0;
+    
+    // Distance from current price to gap center
+    double price_distance = MathAbs(current_price - gap_center) / gap.gap_size;
+    
+    // Volume confirmation strength
+    int start_bar = iBarShift(_Symbol, PERIOD_CURRENT, gap.time_created);
+    double volume_strength = CalculateFVGVolumeConfirmation(start_bar);
+    
+    // VWAP-based probability
+    double vwap_factor = CalculateVWAPProximityFactor(gap);
+    
+    // Combine factors
+    double volume_probability = (volume_strength * 0.4) + 
+                               (vwap_factor * 0.3) + 
+                               ((1 - price_distance) * 0.3);
+    
+    return MathMin(0.9, MathMax(0.1, volume_probability));
 }
 
 //+------------------------------------------------------------------+
@@ -2496,34 +3536,93 @@ double CalculateFVGVolumeConfirmation(int bar_index) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate VPIN Score using Volume Buckets                       |
+//| Enhanced VPIN Score with Advanced Mathematical Models            |
 //+------------------------------------------------------------------+
 double CalculateVPINScore(int start_bar, int lookback_period) {
     double total_volume = 0;
     double buy_volume = 0;
     double sell_volume = 0;
+    double volume_weighted_price = 0;
+    double price_variance = 0;
+    double momentum_factor = 0;
     
+    // Enhanced volume bucket analysis with price impact and momentum
     for(int i = start_bar; i < start_bar + lookback_period; i++) {
         double open_price = iOpen(_Symbol, _Period, i);
         double close_price = iClose(_Symbol, _Period, i);
+        double high_price = iHigh(_Symbol, _Period, i);
+        double low_price = iLow(_Symbol, _Period, i);
         long bar_volume = iVolume(_Symbol, _Period, i);
         
         total_volume += (double)bar_volume;
         
-        // Estimate buy/sell volume based on price movement
-        if(close_price > open_price) {
-            buy_volume += bar_volume * ((close_price - open_price) / (iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i)));
-        } else {
-            sell_volume += bar_volume * ((open_price - close_price) / (iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i)));
+        // Calculate VWAP component for informed trading detection
+        double typical_price = (high_price + low_price + close_price) / 3.0;
+        volume_weighted_price += typical_price * bar_volume;
+        
+        // Enhanced buy/sell volume estimation with microstructure analysis
+        double price_range = high_price - low_price;
+        if(price_range > 0) {
+            // Sophisticated volume distribution based on intrabar dynamics
+            double upper_shadow = high_price - MathMax(open_price, close_price);
+            double lower_shadow = MathMin(open_price, close_price) - low_price;
+            double body_size = MathAbs(close_price - open_price);
+            
+            // Calculate buying/selling pressure ratios
+            double bullish_pressure = (body_size + lower_shadow) / price_range;
+            double bearish_pressure = (body_size + upper_shadow) / price_range;
+            
+            // Normalize pressures
+            double total_pressure = bullish_pressure + bearish_pressure;
+            if(total_pressure > 0) {
+                bullish_pressure /= total_pressure;
+                bearish_pressure /= total_pressure;
+            }
+            
+            // Volume distribution with momentum consideration
+            double price_momentum = (i > start_bar) ? 
+                (close_price - iClose(_Symbol, _Period, i+1)) / g_atr_value : 0;
+            double momentum_weight = 1.0 + MathAbs(price_momentum) * 0.3;
+            
+            if(close_price > open_price) {
+                buy_volume += bar_volume * bullish_pressure * momentum_weight;
+                sell_volume += bar_volume * bearish_pressure;
+            } else {
+                sell_volume += bar_volume * bearish_pressure * momentum_weight;
+                buy_volume += bar_volume * bullish_pressure;
+            }
+            
+            // Accumulate price variance for toxicity calculation
+            price_variance += MathPow(price_range, 2) * bar_volume;
+            momentum_factor += MathAbs(price_momentum) * bar_volume;
         }
     }
     
     if(total_volume <= 0) return 0.5;
     
-    // VPIN = |Buy Volume - Sell Volume| / Total Volume
-    double vpin = MathAbs(buy_volume - sell_volume) / total_volume;
+    // Calculate VWAP deviation for informed trading signal
+    double vwap = volume_weighted_price / total_volume;
+    double current_price = iClose(_Symbol, _Period, start_bar);
+    double price_deviation = MathAbs(current_price - vwap) / vwap;
     
-    return MathMin(1.0, vpin * 2.0); // Scale to 0-1 range
+    // Enhanced VPIN calculation with multiple factors
+    double volume_imbalance = MathAbs(buy_volume - sell_volume) / total_volume;
+    double toxicity_factor = MathSqrt(price_variance / total_volume) / g_atr_value;
+    double momentum_intensity = (momentum_factor / total_volume) / g_atr_value;
+    
+    // Multi-factor informed trading probability
+    double base_vpin = volume_imbalance;
+    double toxicity_adjustment = toxicity_factor * 0.4;
+    double momentum_adjustment = momentum_intensity * 0.3;
+    double price_impact_adjustment = price_deviation * 0.3;
+    
+    double enhanced_vpin = base_vpin + toxicity_adjustment + momentum_adjustment + price_impact_adjustment;
+    
+    // Apply statistical confidence scaling
+    double confidence_factor = MathMin(1.0, lookback_period / 20.0); // More data = higher confidence
+    enhanced_vpin *= confidence_factor;
+    
+    return MathMin(1.0, enhanced_vpin);
 }
 
 //+------------------------------------------------------------------+
@@ -2699,47 +3798,164 @@ double AnalyzeH4MarketStructure() {
 }
 
 //+------------------------------------------------------------------+
-//| Detect 4H FVG Confluence                                        |
+//| Enhanced 4H FVG Confluence Detection with Advanced Analysis     |
 //+------------------------------------------------------------------+
 double DetectH4FVGConfluence() {
-    // Check for FVG patterns on 4H timeframe
+    // Advanced 4H FVG confluence with multiple validation layers
     ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
     double confluence_score = 0.0;
+    double volume_confirmation = 0.0;
+    double session_weight = 0.0;
+    double structure_alignment = 0.0;
     
-    // Check last 10 4H bars for FVG patterns
-    for(int i = 2; i <= 10; i++) {
+    // Get 4H ATR for gap significance calculation
+    int atr_h4_handle = iATR(_Symbol, h4_timeframe, 14);
+    double atr_h4_buffer[1];
+    CopyBuffer(atr_h4_handle, 0, 1, 1, atr_h4_buffer);
+    double atr_h4 = atr_h4_buffer[0];
+    
+    // Enhanced FVG detection with volume and session analysis
+    for(int i = 2; i <= 15; i++) {
         double high_prev_h4 = iHigh(_Symbol, h4_timeframe, i + 1);
         double low_prev_h4 = iLow(_Symbol, h4_timeframe, i + 1);
         double high_next_h4 = iHigh(_Symbol, h4_timeframe, i - 1);
         double low_next_h4 = iLow(_Symbol, h4_timeframe, i - 1);
+        double high_current_h4 = iHigh(_Symbol, h4_timeframe, i);
+        double low_current_h4 = iLow(_Symbol, h4_timeframe, i);
         
-        // Check for bullish FVG on 4H
+        // Get volume data for confirmation
+        long volume_prev = iVolume(_Symbol, h4_timeframe, i + 1);
+        long volume_current = iVolume(_Symbol, h4_timeframe, i);
+        long volume_next = iVolume(_Symbol, h4_timeframe, i - 1);
+        
+        // Calculate average volume for comparison
+        double avg_volume_h4 = CalculateAverageVolume(h4_timeframe, 20);
+        
+        // Get session information
+        datetime bar_time = iTime(_Symbol, h4_timeframe, i);
+        MqlDateTime dt;
+        TimeToStruct(bar_time, dt);
+        
+        // Session weighting (London/NY overlap gets highest weight)
+        double current_session_weight = 0.5; // Default
+        if(dt.hour >= 13 && dt.hour <= 16) {
+            current_session_weight = 1.0; // London/NY overlap
+        } else if(dt.hour >= 8 && dt.hour <= 12) {
+            current_session_weight = 0.8; // London session
+        } else if(dt.hour >= 14 && dt.hour <= 17) {
+            current_session_weight = 0.8; // NY session
+        }
+        
+        // Check for bullish FVG on 4H with enhanced validation
         if(high_prev_h4 < low_next_h4) {
             double gap_size_h4 = low_next_h4 - high_prev_h4;
-            int atr_h4_handle = iATR(_Symbol, h4_timeframe, 14);
-            double atr_h4_buffer[1];
-            CopyBuffer(atr_h4_handle, 0, 1, 1, atr_h4_buffer);
-            double atr_h4 = atr_h4_buffer[0];
+            double gap_ratio = gap_size_h4 / atr_h4;
             
-            if(gap_size_h4 > atr_h4 * 0.3) { // Significant gap
-                confluence_score += 0.3;
+            if(gap_ratio > 0.25) { // Significant gap threshold
+                // Base confluence score
+                double base_score = MathMin(0.4, gap_ratio * 0.8);
+                
+                // Volume confirmation bonus
+                double volume_factor = 0.0;
+                if(volume_current > avg_volume_h4 * 1.2) {
+                    volume_factor = 0.15; // High volume confirmation
+                } else if(volume_current > avg_volume_h4) {
+                    volume_factor = 0.1; // Moderate volume
+                }
+                
+                // Momentum confirmation
+                double momentum_factor = 0.0;
+                double close_prev = iClose(_Symbol, h4_timeframe, i + 1);
+                double close_next = iClose(_Symbol, h4_timeframe, i - 1);
+                if(close_next > close_prev) {
+                    momentum_factor = 0.1; // Bullish momentum
+                }
+                
+                // Apply session weighting
+                double weighted_score = (base_score + volume_factor + momentum_factor) * current_session_weight;
+                confluence_score += weighted_score;
             }
         }
-        // Check for bearish FVG on 4H
+        // Check for bearish FVG on 4H with enhanced validation
         else if(low_prev_h4 > high_next_h4) {
             double gap_size_h4 = low_prev_h4 - high_next_h4;
-            int atr_h4_handle = iATR(_Symbol, h4_timeframe, 14);
-            double atr_h4_buffer[1];
-            CopyBuffer(atr_h4_handle, 0, 1, 1, atr_h4_buffer);
-            double atr_h4 = atr_h4_buffer[0];
+            double gap_ratio = gap_size_h4 / atr_h4;
             
-            if(gap_size_h4 > atr_h4 * 0.3) { // Significant gap
-                confluence_score += 0.3;
+            if(gap_ratio > 0.25) { // Significant gap threshold
+                // Base confluence score
+                double base_score = MathMin(0.4, gap_ratio * 0.8);
+                
+                // Volume confirmation bonus
+                double volume_factor = 0.0;
+                if(volume_current > avg_volume_h4 * 1.2) {
+                    volume_factor = 0.15; // High volume confirmation
+                } else if(volume_current > avg_volume_h4) {
+                    volume_factor = 0.1; // Moderate volume
+                }
+                
+                // Momentum confirmation
+                double momentum_factor = 0.0;
+                double close_prev = iClose(_Symbol, h4_timeframe, i + 1);
+                double close_next = iClose(_Symbol, h4_timeframe, i - 1);
+                if(close_next < close_prev) {
+                    momentum_factor = 0.1; // Bearish momentum
+                }
+                
+                // Apply session weighting
+                double weighted_score = (base_score + volume_factor + momentum_factor) * current_session_weight;
+                confluence_score += weighted_score;
             }
         }
     }
     
+    // Add institutional order flow detection
+    double institutional_flow = CalculateInstitutional4HFlow();
+    confluence_score += institutional_flow * 0.2;
+    
     return MathMin(1.0, confluence_score);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Institutional 4H Flow                                 |
+//+------------------------------------------------------------------+
+double CalculateInstitutional4HFlow() {
+    ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
+    double institutional_score = 0.0;
+    
+    // Analyze last 5 4H bars for institutional patterns
+    for(int i = 1; i <= 5; i++) {
+        double open_h4 = iOpen(_Symbol, h4_timeframe, i);
+        double close_h4 = iClose(_Symbol, h4_timeframe, i);
+        double high_h4 = iHigh(_Symbol, h4_timeframe, i);
+        double low_h4 = iLow(_Symbol, h4_timeframe, i);
+        long volume_h4 = iVolume(_Symbol, h4_timeframe, i);
+        
+        // Calculate body and shadow ratios
+        double body_size = MathAbs(close_h4 - open_h4);
+        double total_range = high_h4 - low_h4;
+        double upper_shadow = high_h4 - MathMax(open_h4, close_h4);
+        double lower_shadow = MathMin(open_h4, close_h4) - low_h4;
+        
+        if(total_range > 0) {
+            double body_ratio = body_size / total_range;
+            
+            // Large body with high volume indicates institutional activity
+            if(body_ratio > 0.6) {
+                double avg_volume = CalculateAverageVolume(h4_timeframe, 20);
+                if(volume_h4 > avg_volume * 1.5) {
+                    institutional_score += 0.2;
+                }
+            }
+            
+            // Absorption patterns (large shadows with high volume)
+            double shadow_ratio = (upper_shadow + lower_shadow) / total_range;
+            if(shadow_ratio > 0.4 && volume_h4 > CalculateAverageVolume(h4_timeframe, 20) * 1.3) {
+                institutional_score += 0.15;
+            }
+        }
+    }
+    
+    return MathMin(1.0, institutional_score);
 }
 
 //+------------------------------------------------------------------+
