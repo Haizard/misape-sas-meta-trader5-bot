@@ -310,6 +310,7 @@ input int RB_ValidBreakEndHour = 13;       // Valid breakout end hour
 
 input group "=== Support/Resistance Strategy ==="
 input bool EnableSupportResistance = true; // Enable Support/Resistance strategy
+input bool SR_EnableMultiTimeframe = true; // Enable enhanced multi-timeframe analysis
 input int SR_LookbackPeriod = 100;         // Lookback period for S/R detection
 input double SR_LevelTolerance = 10.0;     // Level tolerance in points
 
@@ -497,6 +498,164 @@ bool g_auto_agent_enabled = false;         // Current Auto Agent state
 int g_current_verification_count = 2;      // Current signal verification count setting
 datetime g_last_auto_trade_time = 0;       // Last automatic trade execution time
 bool g_auto_agent_button_state = false;    // Auto Agent button visual state
+
+//+------------------------------------------------------------------+
+//| MULTI-TIMEFRAME SUPPORT/RESISTANCE STRUCTURES                   |
+//+------------------------------------------------------------------+
+
+// Multi-timeframe Support/Resistance Level Structure
+struct MultiTimeframeSRLevel {
+    double price;
+    ENUM_TIMEFRAMES primary_timeframe;      // Primary timeframe where level was detected
+    double timeframe_weights[8];            // Weight for each timeframe (M1, M5, M15, M30, H1, H4, D1, W1)
+    double confluence_score;                 // Overall confluence score (0.0 to 1.0)
+    bool is_major_level;                     // 4H+ timeframe level
+    datetime formation_time;
+    double volume_profile_strength;          // Volume profile validation score
+    int touch_count_total;                   // Total touches across all timeframes
+    double strength_score_mtf;               // Multi-timeframe strength score
+    bool is_support;
+    bool is_resistance;
+    string obj_name;
+    
+    // Fibonacci integration
+    bool is_fibonacci_level;                 // Is this a Fibonacci retracement level
+    double fibonacci_ratio;                  // Fibonacci ratio (0.236, 0.382, 0.5, 0.618, 0.786)
+    double fibonacci_confidence;             // Fibonacci level confidence
+    
+    // VWAP integration
+    bool is_vwap_level;                      // Is this a VWAP-based level
+    double vwap_deviation;                   // Standard deviation from VWAP
+    
+    // Statistical validation
+    double statistical_significance;         // P-value for level significance
+    double expected_random_touches;          // Expected random touches for comparison
+    double time_persistence_factor;          // How long level has persisted
+};
+
+// Fibonacci Retracement Structure
+struct FibonacciLevel {
+    double price;
+    double ratio;                            // 0.236, 0.382, 0.5, 0.618, 0.786
+    double swing_high;
+    double swing_low;
+    datetime swing_high_time;
+    datetime swing_low_time;
+    double confidence_score;
+    int touch_count;
+    datetime last_touch;
+    bool is_active;
+    string obj_name;
+};
+
+// Volume Profile Structure
+struct VolumeProfileLevel {
+    double price;
+    double volume_at_price;
+    double volume_percentage;                // Percentage of total volume
+    bool is_poc;                            // Point of Control
+    bool is_value_area_high;
+    bool is_value_area_low;
+    datetime calculation_start;
+    datetime calculation_end;
+    double support_resistance_strength;
+};
+
+// VWAP with Standard Deviation Bands
+struct VWAPLevel {
+    double vwap_price;
+    double std_dev;
+    double upper_bands[4];                   // 1.0, 1.5, 2.0, 2.5 std dev
+    double lower_bands[4];
+    datetime calculation_start;
+    bool is_support_zone;
+    bool is_resistance_zone;
+    double confidence_score;
+};
+
+// Multi-timeframe Analysis Structure
+struct MultiTimeframeAnalysis {
+    ENUM_TIMEFRAMES analysis_timeframes[5];  // Timeframes to analyze
+    double trend_alignment_score;            // How aligned trends are across timeframes
+    ENUM_SIGNAL_TYPE primary_trend;          // Primary trend from higher timeframe
+    ENUM_SIGNAL_TYPE secondary_trend;        // Secondary trend from medium timeframe
+    double confluence_zones[10];             // Price zones with high confluence
+    int confluence_count;
+    datetime last_analysis_time;
+};
+
+// Enhanced Support/Resistance Signal with Multi-timeframe Data
+struct EnhancedSRSignal {
+    ENUM_SIGNAL_TYPE signal_type;
+    double entry_price;
+    double stop_loss;
+    double take_profit;
+    double confidence;
+    datetime signal_time;
+    
+    // Multi-timeframe data
+    ENUM_TIMEFRAMES signal_timeframe;        // Timeframe that generated the signal
+    ENUM_TIMEFRAMES trend_timeframe;         // Higher timeframe for trend context
+    double mtf_confluence_score;             // Multi-timeframe confluence
+    
+    // Level data
+    double sr_level_price;
+    double level_strength;
+    bool is_fibonacci_confluence;
+    bool is_volume_confluence;
+    bool is_vwap_confluence;
+    
+    // Statistical validation
+    double statistical_confidence;
+    double risk_reward_ratio;
+    
+    string obj_name;
+    bool signal_sent;
+};
+
+//+------------------------------------------------------------------+
+//| MULTI-TIMEFRAME GLOBAL VARIABLES                                |
+//+------------------------------------------------------------------+
+
+// Multi-timeframe arrays
+MultiTimeframeSRLevel g_mtf_sr_levels[];
+int g_mtf_sr_count = 0;
+
+FibonacciLevel g_fibonacci_levels[];
+int g_fibonacci_count = 0;
+
+VolumeProfileLevel g_volume_profile[];
+int g_volume_profile_count = 0;
+
+VWAPLevel g_vwap_levels[];
+int g_vwap_level_count = 0;
+
+EnhancedSRSignal g_enhanced_sr_signals[];
+int g_enhanced_sr_signal_count = 0;
+
+// Multi-timeframe analysis data
+MultiTimeframeAnalysis g_mtf_analysis;
+ENUM_TIMEFRAMES g_analysis_timeframes[5] = {PERIOD_M15, PERIOD_M30, PERIOD_H1, PERIOD_H4, PERIOD_D1};
+datetime g_last_mtf_analysis = 0;
+int g_mtf_analysis_interval = 300;           // 5 minutes between full MTF analysis
+
+// Fibonacci calculation variables
+double g_last_swing_high = 0;
+double g_last_swing_low = 0;
+datetime g_last_swing_high_time = 0;
+datetime g_last_swing_low_time = 0;
+bool g_fibonacci_levels_calculated = false;
+
+// Volume profile calculation variables
+int g_volume_profile_period = 100;           // Bars to analyze for volume profile
+double g_volume_profile_price_levels[200];   // Price levels for volume calculation
+double g_volume_at_price[200];               // Volume at each price level
+int g_volume_profile_resolution = 200;       // Number of price levels
+
+// VWAP calculation variables for multiple timeframes
+VWAPData g_vwap_h4;
+VWAPData g_vwap_d1;
+bool g_vwap_mtf_calculated = false;
 
 // Trailing Stop variables
 struct TrailingStopData {
@@ -4769,17 +4928,22 @@ void CalculateRangeBreakoutRisk(double &stop_loss, double &take_profit,
 //| Run Support/Resistance strategy                                  |
 //+------------------------------------------------------------------+
 void RunSupportResistanceStrategy() {
-    // Enhanced S/R level detection with professional algorithms
-    UpdateEnhancedSupportResistanceLevels();
+    if(SR_EnableMultiTimeframe) {
+        // Run enhanced multi-timeframe analysis
+        RunEnhancedMultiTimeframeSRStrategy();
+    } else {
+        // Run traditional S/R analysis
+        UpdateEnhancedSupportResistanceLevels();
 
-    TradingSignal signal;
-    signal = GenerateEnhancedSupportResistanceSignal();
-    if(signal.is_valid) {
-        UpdateStrategySignal(STRATEGY_SUPPORT_RESISTANCE, signal);
+        TradingSignal signal;
+        signal = GenerateEnhancedSupportResistanceSignal();
+        if(signal.is_valid) {
+            UpdateStrategySignal(STRATEGY_SUPPORT_RESISTANCE, signal);
+        }
+
+        // Clean up old/invalid levels
+        CleanupSRLevels();
     }
-
-    // Clean up old/invalid levels
-    CleanupSRLevels();
 }
 
 //+------------------------------------------------------------------+
@@ -5263,6 +5427,1115 @@ void CleanupSRLevels() {
             RemoveSRLevel(i);
         }
     }
+}
+
+//+------------------------------------------------------------------+
+//| MULTI-TIMEFRAME SUPPORT/RESISTANCE ANALYSIS                     |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Run Enhanced Multi-Timeframe Support/Resistance Strategy        |
+//+------------------------------------------------------------------+
+void RunEnhancedMultiTimeframeSRStrategy() {
+    // Perform multi-timeframe analysis every 5 minutes
+    if(TimeCurrent() - g_last_mtf_analysis >= g_mtf_analysis_interval) {
+        PerformMultiTimeframeAnalysis();
+        g_last_mtf_analysis = TimeCurrent();
+    }
+    
+    // Update Fibonacci levels
+    UpdateFibonacciLevels();
+    
+    // Update Volume Profile levels
+    UpdateVolumeProfileLevels();
+    
+    // Update VWAP levels for multiple timeframes
+    UpdateMultiTimeframeVWAPLevels();
+    
+    // Generate enhanced signals with multi-timeframe confluence
+    TradingSignal signal;
+    signal = GenerateEnhancedMultiTimeframeSRSignal();
+    if(signal.is_valid) {
+        UpdateStrategySignal(STRATEGY_SUPPORT_RESISTANCE, signal);
+    }
+    
+    // Clean up old levels
+    CleanupMultiTimeframeSRLevels();
+}
+
+//+------------------------------------------------------------------+
+//| Perform Multi-Timeframe Analysis                                |
+//+------------------------------------------------------------------+
+void PerformMultiTimeframeAnalysis() {
+    // Initialize analysis structure
+    g_mtf_analysis.last_analysis_time = TimeCurrent();
+    g_mtf_analysis.confluence_count = 0;
+    
+    // Analyze each timeframe for S/R levels
+    for(int tf_idx = 0; tf_idx < 5; tf_idx++) {
+        ENUM_TIMEFRAMES timeframe = g_analysis_timeframes[tf_idx];
+        AnalyzeTimeframeForSRLevels(timeframe);
+    }
+    
+    // Calculate confluence zones
+    CalculateConfluenceZones();
+    
+    // Determine trend alignment
+    CalculateTrendAlignment();
+    
+    if(EnableDebugLogging) {
+        Print("Multi-timeframe analysis completed. Confluence zones: ", g_mtf_analysis.confluence_count);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Analyze Specific Timeframe for S/R Levels                       |
+//+------------------------------------------------------------------+
+void AnalyzeTimeframeForSRLevels(ENUM_TIMEFRAMES timeframe) {
+    int bars = iBars(_Symbol, timeframe);
+    if(bars < 50) return;
+    
+    int lookback = MathMin(100, bars - 10);
+    double timeframe_weight = GetTimeframeWeight(timeframe);
+    
+    // Detect swing highs and lows for this timeframe
+    for(int i = 10; i < lookback; i++) {
+        // Check for swing high
+        if(IsSwingHighMTF(_Symbol, timeframe, i, 5)) {
+            double swing_high = iHigh(_Symbol, timeframe, i);
+            datetime swing_time = iTime(_Symbol, timeframe, i);
+            
+            // Create or update multi-timeframe S/R level
+            CreateOrUpdateMTFSRLevel(swing_high, timeframe, timeframe_weight, true, false, swing_time);
+        }
+        
+        // Check for swing low
+        if(IsSwingLowMTF(_Symbol, timeframe, i, 5)) {
+            double swing_low = iLow(_Symbol, timeframe, i);
+            datetime swing_time = iTime(_Symbol, timeframe, i);
+            
+            // Create or update multi-timeframe S/R level
+            CreateOrUpdateMTFSRLevel(swing_low, timeframe, timeframe_weight, false, true, swing_time);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get Timeframe Weight for Analysis                               |
+//+------------------------------------------------------------------+
+double GetTimeframeWeight(ENUM_TIMEFRAMES timeframe) {
+    switch(timeframe) {
+        case PERIOD_M15: return 0.1;
+        case PERIOD_M30: return 0.2;
+        case PERIOD_H1:  return 0.3;
+        case PERIOD_H4:  return 0.6;  // Higher weight for 4H
+        case PERIOD_D1:  return 1.0;  // Highest weight for daily
+        default: return 0.1;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Create or Update Multi-Timeframe S/R Level                      |
+//+------------------------------------------------------------------+
+void CreateOrUpdateMTFSRLevel(double price, ENUM_TIMEFRAMES timeframe, double weight, 
+                              bool is_resistance, bool is_support, datetime formation_time) {
+    double tolerance = g_atr_value * 0.3; // ATR-based tolerance
+    
+    // Check if level already exists
+    for(int i = 0; i < g_mtf_sr_count; i++) {
+        if(MathAbs(g_mtf_sr_levels[i].price - price) <= tolerance) {
+            // Update existing level
+            int tf_index = GetTimeframeIndex(timeframe);
+            if(tf_index >= 0 && tf_index < 8) {
+                g_mtf_sr_levels[i].timeframe_weights[tf_index] += weight;
+                g_mtf_sr_levels[i].touch_count_total++;
+                
+                // Update confluence score
+                g_mtf_sr_levels[i].confluence_score = CalculateMTFConfluenceScore(i);
+                
+                // Mark as major level if 4H or higher
+                if(timeframe >= PERIOD_H4) {
+                    g_mtf_sr_levels[i].is_major_level = true;
+                }
+            }
+            return;
+        }
+    }
+    
+    // Create new level
+    if(g_mtf_sr_count >= ArraySize(g_mtf_sr_levels)) {
+        ArrayResize(g_mtf_sr_levels, g_mtf_sr_count + 50);
+    }
+    
+    MultiTimeframeSRLevel new_level;
+    new_level.price = price;
+    new_level.primary_timeframe = timeframe;
+    new_level.formation_time = formation_time;
+    new_level.is_support = is_support;
+    new_level.is_resistance = is_resistance;
+    new_level.is_major_level = (timeframe >= PERIOD_H4);
+    new_level.touch_count_total = 1;
+    
+    // Initialize timeframe weights
+    for(int j = 0; j < 8; j++) {
+        new_level.timeframe_weights[j] = 0.0;
+    }
+    
+    int tf_index = GetTimeframeIndex(timeframe);
+    if(tf_index >= 0 && tf_index < 8) {
+        new_level.timeframe_weights[tf_index] = weight;
+    }
+    
+    new_level.confluence_score = weight;
+    new_level.statistical_significance = CalculateStatisticalSignificance(price, timeframe);
+    
+    // Create visual representation
+    new_level.obj_name = "MTF_SR_" + IntegerToString(g_mtf_sr_count) + "_" + IntegerToString(GetTickCount());
+    CreateMTFSRLevelVisual(new_level);
+    
+    g_mtf_sr_levels[g_mtf_sr_count] = new_level;
+    g_mtf_sr_count++;
+}
+
+//+------------------------------------------------------------------+
+//| Get Timeframe Index for Array                                   |
+//+------------------------------------------------------------------+
+int GetTimeframeIndex(ENUM_TIMEFRAMES timeframe) {
+    switch(timeframe) {
+        case PERIOD_M1:  return 0;
+        case PERIOD_M5:  return 1;
+        case PERIOD_M15: return 2;
+        case PERIOD_M30: return 3;
+        case PERIOD_H1:  return 4;
+        case PERIOD_H4:  return 5;
+        case PERIOD_D1:  return 6;
+        case PERIOD_W1:  return 7;
+        default: return -1;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Multi-Timeframe Confluence Score                      |
+//+------------------------------------------------------------------+
+double CalculateMTFConfluenceScore(int level_index) {
+    if(level_index < 0 || level_index >= g_mtf_sr_count) return 0.0;
+    
+    double total_weight = 0.0;
+    int active_timeframes = 0;
+    
+    for(int i = 0; i < 8; i++) {
+        if(g_mtf_sr_levels[level_index].timeframe_weights[i] > 0) {
+            total_weight += g_mtf_sr_levels[level_index].timeframe_weights[i];
+            active_timeframes++;
+        }
+    }
+    
+    // Bonus for multiple timeframe confirmation
+    double mtf_bonus = (active_timeframes > 1) ? (active_timeframes - 1) * 0.1 : 0.0;
+    
+    return MathMin(1.0, total_weight + mtf_bonus);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Statistical Significance                              |
+//+------------------------------------------------------------------+
+double CalculateStatisticalSignificance(double price, ENUM_TIMEFRAMES timeframe) {
+    int bars = iBars(_Symbol, timeframe);
+    if(bars < 50) return 0.0;
+    
+    double price_range = iHigh(_Symbol, timeframe, iHighest(_Symbol, timeframe, MODE_HIGH, 100, 1)) - 
+                        iLow(_Symbol, timeframe, iLowest(_Symbol, timeframe, MODE_LOW, 100, 1));
+    
+    if(price_range <= 0) return 0.0;
+    
+    // Calculate expected random touches
+    double expected_touches = 100.0 / (price_range / (g_atr_value * 0.5));
+    
+    // Find actual touches near this level
+    int actual_touches = 0;
+    double tolerance = g_atr_value * 0.3;
+    
+    for(int i = 1; i < MathMin(100, bars); i++) {
+        double high = iHigh(_Symbol, timeframe, i);
+        double low = iLow(_Symbol, timeframe, i);
+        
+        if((MathAbs(high - price) <= tolerance) || (MathAbs(low - price) <= tolerance)) {
+            actual_touches++;
+        }
+    }
+    
+    // Calculate significance (simplified p-value approximation)
+    if(expected_touches <= 0) return 0.0;
+    
+    double significance = (actual_touches > expected_touches) ? 
+                         MathMin(0.99, actual_touches / expected_touches - 1.0) : 0.0;
+    
+    return significance;
+}
+
+//+------------------------------------------------------------------+
+//| Update Fibonacci Levels                                         |
+//+------------------------------------------------------------------+
+void UpdateFibonacciLevels() {
+    // Find recent swing high and low
+    int bars = iBars(_Symbol, _Period);
+    if(bars < 100) return;
+    
+    double swing_high = 0, swing_low = DBL_MAX;
+    datetime swing_high_time = 0, swing_low_time = 0;
+    
+    // Look for significant swings in the last 50 bars
+    for(int i = 5; i < 50; i++) {
+        if(IsSwingHigh(i, 5)) {
+            double high = iHigh(_Symbol, _Period, i);
+            if(high > swing_high) {
+                swing_high = high;
+                swing_high_time = iTime(_Symbol, _Period, i);
+            }
+        }
+        
+        if(IsSwingLow(i, 5)) {
+            double low = iLow(_Symbol, _Period, i);
+            if(low < swing_low) {
+                swing_low = low;
+                swing_low_time = iTime(_Symbol, _Period, i);
+            }
+        }
+    }
+    
+    // Create Fibonacci levels if we have valid swings
+    if(swing_high > swing_low && swing_high > 0 && swing_low < DBL_MAX) {
+        CreateFibonacciLevels(swing_high, swing_low, swing_high_time, swing_low_time);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Create Fibonacci Retracement Levels                             |
+//+------------------------------------------------------------------+
+void CreateFibonacciLevels(double swing_high, double swing_low, datetime high_time, datetime low_time) {
+    double fib_ratios[] = {0.236, 0.382, 0.5, 0.618, 0.786};
+    double range = swing_high - swing_low;
+    
+    // Clear existing Fibonacci levels
+    for(int i = g_fibonacci_count - 1; i >= 0; i--) {
+        ObjectDelete(0, g_fibonacci_levels[i].obj_name);
+    }
+    g_fibonacci_count = 0;
+    
+    // Create new Fibonacci levels
+    for(int i = 0; i < ArraySize(fib_ratios); i++) {
+        if(g_fibonacci_count >= ArraySize(g_fibonacci_levels)) {
+            ArrayResize(g_fibonacci_levels, g_fibonacci_count + 10);
+        }
+        
+        FibonacciLevel fib_level;
+        fib_level.price = swing_low + (range * fib_ratios[i]);
+        fib_level.ratio = fib_ratios[i];
+        fib_level.swing_high = swing_high;
+        fib_level.swing_low = swing_low;
+        fib_level.swing_high_time = high_time;
+        fib_level.swing_low_time = low_time;
+        fib_level.confidence_score = CalculateFibonacciConfidence(fib_ratios[i]);
+        fib_level.touch_count = 0;
+        fib_level.is_active = true;
+        fib_level.obj_name = "FIB_" + DoubleToString(fib_ratios[i], 3) + "_" + IntegerToString(GetTickCount());
+        
+        // Create visual representation
+        CreateFibonacciLevelVisual(fib_level);
+        
+        // Add to corresponding MTF S/R level
+        CreateOrUpdateMTFSRLevel(fib_level.price, _Period, 0.3, true, true, TimeCurrent());
+        
+        // Mark as Fibonacci level
+        for(int j = 0; j < g_mtf_sr_count; j++) {
+            if(MathAbs(g_mtf_sr_levels[j].price - fib_level.price) <= g_atr_value * 0.2) {
+                g_mtf_sr_levels[j].is_fibonacci_level = true;
+                g_mtf_sr_levels[j].fibonacci_ratio = fib_ratios[i];
+                g_mtf_sr_levels[j].fibonacci_confidence = fib_level.confidence_score;
+                break;
+            }
+        }
+        
+        g_fibonacci_levels[g_fibonacci_count] = fib_level;
+        g_fibonacci_count++;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Fibonacci Level Confidence                            |
+//+------------------------------------------------------------------+
+double CalculateFibonacciConfidence(double ratio) {
+    // Golden ratio (0.618) and 0.5 have highest confidence
+    if(MathAbs(ratio - 0.618) < 0.001) return 0.9;
+    if(MathAbs(ratio - 0.5) < 0.001) return 0.8;
+    if(MathAbs(ratio - 0.382) < 0.001) return 0.75;
+    if(MathAbs(ratio - 0.786) < 0.001) return 0.7;
+    if(MathAbs(ratio - 0.236) < 0.001) return 0.65;
+    return 0.5;
+}
+
+//+------------------------------------------------------------------+
+//| Update Volume Profile Levels                                    |
+//+------------------------------------------------------------------+
+void UpdateVolumeProfileLevels() {
+    int bars = iBars(_Symbol, _Period);
+    if(bars < g_volume_profile_period) return;
+    
+    // Clear existing volume profile
+    g_volume_profile_count = 0;
+    
+    // Calculate price range
+    double highest = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, g_volume_profile_period, 1));
+    double lowest = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, g_volume_profile_period, 1));
+    double price_step = (highest - lowest) / g_volume_profile_resolution;
+    
+    if(price_step <= 0) return;
+    
+    // Initialize volume at price arrays
+    for(int i = 0; i < g_volume_profile_resolution; i++) {
+        g_volume_profile_price_levels[i] = lowest + (i * price_step);
+        g_volume_at_price[i] = 0;
+    }
+    
+    // Calculate volume at each price level
+    for(int bar = 1; bar <= g_volume_profile_period; bar++) {
+        double high = iHigh(_Symbol, _Period, bar);
+        double low = iLow(_Symbol, _Period, bar);
+        long volume = iVolume(_Symbol, _Period, bar);
+        
+        // Distribute volume across price range of the bar
+        double bar_range = high - low;
+        if(bar_range > 0) {
+            for(int i = 0; i < g_volume_profile_resolution; i++) {
+                double price_level = g_volume_profile_price_levels[i];
+                if(price_level >= low && price_level <= high) {
+                    g_volume_at_price[i] += volume / (bar_range / price_step);
+                }
+            }
+        }
+    }
+    
+    // Find POC and Value Area
+    CreateVolumeProfileLevels();
+}
+
+//+------------------------------------------------------------------+
+//| Create Volume Profile S/R Levels                                |
+//+------------------------------------------------------------------+
+void CreateVolumeProfileLevels() {
+    // Find Point of Control (POC)
+    double max_volume = 0;
+    int poc_index = 0;
+    
+    for(int i = 0; i < g_volume_profile_resolution; i++) {
+        if(g_volume_at_price[i] > max_volume) {
+            max_volume = g_volume_at_price[i];
+            poc_index = i;
+        }
+    }
+    
+    if(max_volume <= 0) return;
+    
+    // Calculate total volume
+    double total_volume = 0;
+    for(int i = 0; i < g_volume_profile_resolution; i++) {
+        total_volume += g_volume_at_price[i];
+    }
+    
+    // Create POC level
+    if(g_volume_profile_count >= ArraySize(g_volume_profile)) {
+        ArrayResize(g_volume_profile, g_volume_profile_count + 20);
+    }
+    
+    VolumeProfileLevel poc_level;
+    poc_level.price = g_volume_profile_price_levels[poc_index];
+    poc_level.volume_at_price = max_volume;
+    poc_level.volume_percentage = (max_volume / total_volume) * 100;
+    poc_level.is_poc = true;
+    poc_level.calculation_start = iTime(_Symbol, _Period, g_volume_profile_period);
+    poc_level.calculation_end = TimeCurrent();
+    poc_level.support_resistance_strength = 0.8; // POC has high S/R strength
+    
+    g_volume_profile[g_volume_profile_count] = poc_level;
+    g_volume_profile_count++;
+    
+    // Create POC as MTF S/R level
+    CreateOrUpdateMTFSRLevel(poc_level.price, _Period, 0.5, true, true, TimeCurrent());
+    
+    // Mark as volume profile level
+    for(int i = 0; i < g_mtf_sr_count; i++) {
+        if(MathAbs(g_mtf_sr_levels[i].price - poc_level.price) <= g_atr_value * 0.2) {
+            g_mtf_sr_levels[i].volume_profile_strength = poc_level.support_resistance_strength;
+            break;
+        }
+    }
+    
+    // Find Value Area (70% of volume)
+    double target_volume = total_volume * 0.7;
+    double accumulated_volume = max_volume;
+    int va_high_index = poc_index;
+    int va_low_index = poc_index;
+    
+    // Expand from POC until we reach 70% of volume
+    while(accumulated_volume < target_volume && (va_high_index < g_volume_profile_resolution - 1 || va_low_index > 0)) {
+        double volume_above = (va_high_index < g_volume_profile_resolution - 1) ? g_volume_at_price[va_high_index + 1] : 0;
+        double volume_below = (va_low_index > 0) ? g_volume_at_price[va_low_index - 1] : 0;
+        
+        if(volume_above >= volume_below && va_high_index < g_volume_profile_resolution - 1) {
+            va_high_index++;
+            accumulated_volume += volume_above;
+        } else if(va_low_index > 0) {
+            va_low_index--;
+            accumulated_volume += volume_below;
+        } else {
+            break;
+        }
+    }
+    
+    // Create Value Area High and Low levels
+    if(va_high_index != poc_index) {
+        CreateVolumeProfileLevel(g_volume_profile_price_levels[va_high_index], false, true, false, 0.6);
+    }
+    
+    if(va_low_index != poc_index) {
+        CreateVolumeProfileLevel(g_volume_profile_price_levels[va_low_index], false, false, true, 0.6);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Create Individual Volume Profile Level                          |
+//+------------------------------------------------------------------+
+void CreateVolumeProfileLevel(double price, bool is_poc, bool is_va_high, bool is_va_low, double strength) {
+    if(g_volume_profile_count >= ArraySize(g_volume_profile)) {
+        ArrayResize(g_volume_profile, g_volume_profile_count + 10);
+    }
+    
+    VolumeProfileLevel level;
+    level.price = price;
+    level.is_poc = is_poc;
+    level.is_value_area_high = is_va_high;
+    level.is_value_area_low = is_va_low;
+    level.support_resistance_strength = strength;
+    level.calculation_start = iTime(_Symbol, _Period, g_volume_profile_period);
+    level.calculation_end = TimeCurrent();
+    
+    g_volume_profile[g_volume_profile_count] = level;
+    g_volume_profile_count++;
+    
+    // Add to MTF S/R levels
+    CreateOrUpdateMTFSRLevel(price, _Period, strength * 0.5, true, true, TimeCurrent());
+}
+
+//+------------------------------------------------------------------+
+//| Update Multi-Timeframe VWAP Levels                              |
+//+------------------------------------------------------------------+
+void UpdateMultiTimeframeVWAPLevels() {
+    // Update H4 VWAP
+    UpdateVWAPForTimeframe(PERIOD_H4, g_vwap_h4);
+    
+    // Update Daily VWAP
+    UpdateVWAPForTimeframe(PERIOD_D1, g_vwap_d1);
+    
+    // Create VWAP-based S/R levels
+    CreateVWAPSRLevels();
+}
+
+//+------------------------------------------------------------------+
+//| Update VWAP for Specific Timeframe                              |
+//+------------------------------------------------------------------+
+void UpdateVWAPForTimeframe(ENUM_TIMEFRAMES timeframe, VWAPData &vwap_data) {
+    int bars = iBars(_Symbol, timeframe);
+    if(bars < 20) return;
+    
+    // Reset VWAP calculation at session start
+    datetime current_time = TimeCurrent();
+    datetime session_start = GetSessionStart(timeframe);
+    
+    if(vwap_data.session_start != session_start) {
+        vwap_data.session_start = session_start;
+        vwap_data.cumulative_pv = 0;
+        vwap_data.cumulative_volume = 0;
+        ArrayFree(g_vwap_pv_array);
+        ArrayFree(g_vwap_vol_array);
+        g_vwap_data_count = 0;
+    }
+    
+    // Calculate VWAP for current session
+    int session_bars = GetSessionBars(timeframe, session_start);
+    
+    for(int i = session_bars - 1; i >= 0; i--) {
+        double typical_price = (iHigh(_Symbol, timeframe, i) + iLow(_Symbol, timeframe, i) + iClose(_Symbol, timeframe, i)) / 3.0;
+        long volume = iVolume(_Symbol, timeframe, i);
+        
+        vwap_data.cumulative_pv += typical_price * (double)volume;
+        vwap_data.cumulative_volume += (double)volume;
+        
+        // Store for standard deviation calculation
+        if(g_vwap_data_count >= ArraySize(g_vwap_pv_array)) {
+            ArrayResize(g_vwap_pv_array, g_vwap_data_count + 100);
+            ArrayResize(g_vwap_vol_array, g_vwap_data_count + 100);
+        }
+        
+        g_vwap_pv_array[g_vwap_data_count] = typical_price;
+        g_vwap_vol_array[g_vwap_data_count] = (double)volume;
+        g_vwap_data_count++;
+    }
+    
+    if(vwap_data.cumulative_volume > 0) {
+        vwap_data.vwap_value = vwap_data.cumulative_pv / vwap_data.cumulative_volume;
+        
+        // Calculate standard deviation
+        CalculateVWAPStandardDeviation(vwap_data);
+        
+        vwap_data.is_valid = true;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate VWAP Standard Deviation                               |
+//+------------------------------------------------------------------+
+void CalculateVWAPStandardDeviation(VWAPData &vwap_data) {
+    if(g_vwap_data_count < 2) return;
+    
+    double sum_squared_diff = 0;
+    double total_volume = 0;
+    
+    for(int i = 0; i < g_vwap_data_count; i++) {
+        double price_diff = g_vwap_pv_array[i] - vwap_data.vwap_value;
+        sum_squared_diff += (price_diff * price_diff) * g_vwap_vol_array[i];
+        total_volume += g_vwap_vol_array[i];
+    }
+    
+    if(total_volume > 0) {
+        double variance = sum_squared_diff / total_volume;
+        double std_dev = MathSqrt(variance);
+        
+        vwap_data.std_dev_1 = std_dev;
+        vwap_data.std_dev_2 = std_dev * 2.0;
+        
+        // Calculate bands
+        vwap_data.upper_band_1 = vwap_data.vwap_value + vwap_data.std_dev_1;
+        vwap_data.lower_band_1 = vwap_data.vwap_value - vwap_data.std_dev_1;
+        vwap_data.upper_band_2 = vwap_data.vwap_value + vwap_data.std_dev_2;
+        vwap_data.lower_band_2 = vwap_data.vwap_value - vwap_data.std_dev_2;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Create VWAP-based S/R Levels                                    |
+//+------------------------------------------------------------------+
+void CreateVWAPSRLevels() {
+    // Clear existing VWAP levels
+    g_vwap_level_count = 0;
+    
+    // Create levels from H4 VWAP
+    if(g_vwap_h4.is_valid) {
+        CreateVWAPLevel(g_vwap_h4, PERIOD_H4, 0.6);
+    }
+    
+    // Create levels from Daily VWAP
+    if(g_vwap_d1.is_valid) {
+        CreateVWAPLevel(g_vwap_d1, PERIOD_D1, 0.8);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Create Individual VWAP Level                                    |
+//+------------------------------------------------------------------+
+void CreateVWAPLevel(VWAPData &vwap_data, ENUM_TIMEFRAMES timeframe, double base_strength) {
+    if(g_vwap_level_count >= ArraySize(g_vwap_levels)) {
+        ArrayResize(g_vwap_levels, g_vwap_level_count + 10);
+    }
+    
+    VWAPLevel level;
+    level.vwap_price = vwap_data.vwap_value;
+    level.std_dev = vwap_data.std_dev_1;
+    level.calculation_start = vwap_data.session_start;
+    level.confidence_score = base_strength;
+    
+    // Set standard deviation bands
+    level.upper_bands[0] = vwap_data.upper_band_1;
+    level.upper_bands[1] = vwap_data.vwap_value + (vwap_data.std_dev_1 * 1.5);
+    level.upper_bands[2] = vwap_data.upper_band_2;
+    level.upper_bands[3] = vwap_data.vwap_value + (vwap_data.std_dev_1 * 2.5);
+    
+    level.lower_bands[0] = vwap_data.lower_band_1;
+    level.lower_bands[1] = vwap_data.vwap_value - (vwap_data.std_dev_1 * 1.5);
+    level.lower_bands[2] = vwap_data.lower_band_2;
+    level.lower_bands[3] = vwap_data.vwap_value - (vwap_data.std_dev_1 * 2.5);
+    
+    g_vwap_levels[g_vwap_level_count] = level;
+    g_vwap_level_count++;
+    
+    // Add VWAP and bands to MTF S/R levels
+    CreateOrUpdateMTFSRLevel(level.vwap_price, timeframe, base_strength, true, true, TimeCurrent());
+    
+    for(int i = 0; i < 4; i++) {
+        CreateOrUpdateMTFSRLevel(level.upper_bands[i], timeframe, base_strength * 0.7, false, true, TimeCurrent());
+        CreateOrUpdateMTFSRLevel(level.lower_bands[i], timeframe, base_strength * 0.7, true, false, TimeCurrent());
+    }
+    
+    // Mark MTF levels as VWAP-based
+    for(int i = 0; i < g_mtf_sr_count; i++) {
+        double tolerance = g_atr_value * 0.3;
+        if(MathAbs(g_mtf_sr_levels[i].price - level.vwap_price) <= tolerance) {
+            g_mtf_sr_levels[i].is_vwap_level = true;
+            g_mtf_sr_levels[i].vwap_deviation = 0.0;
+        }
+        
+        for(int j = 0; j < 4; j++) {
+            if(MathAbs(g_mtf_sr_levels[i].price - level.upper_bands[j]) <= tolerance) {
+                g_mtf_sr_levels[i].is_vwap_level = true;
+                g_mtf_sr_levels[i].vwap_deviation = (j + 1) * 0.5;
+            }
+            if(MathAbs(g_mtf_sr_levels[i].price - level.lower_bands[j]) <= tolerance) {
+                g_mtf_sr_levels[i].is_vwap_level = true;
+                g_mtf_sr_levels[i].vwap_deviation = -(j + 1) * 0.5;
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Generate Enhanced Multi-Timeframe S/R Signal                    |
+//+------------------------------------------------------------------+
+TradingSignal GenerateEnhancedMultiTimeframeSRSignal() {
+    TradingSignal signal;
+    signal.signal_type = SIGNAL_TYPE_HOLD;
+    signal.confidence_level = 0.0;
+    signal.is_valid = false;
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    double tolerance = g_atr_value * 0.5;
+    
+    // Find the most relevant S/R level
+    int best_level_index = -1;
+    double best_interaction_score = 0.0;
+    
+    for(int i = 0; i < g_mtf_sr_count; i++) {
+        double distance = MathAbs(current_price - g_mtf_sr_levels[i].price);
+        if(distance <= tolerance) {
+            double interaction_score = CalculateMTFInteractionScore(i, current_price);
+            if(interaction_score > best_interaction_score) {
+                best_interaction_score = interaction_score;
+                best_level_index = i;
+            }
+        }
+    }
+    
+    if(best_level_index == -1 || best_interaction_score < 0.65) {
+        return signal;
+    }
+    
+    // Determine signal direction based on level type and price action
+    MultiTimeframeSRLevel level;
+    level = g_mtf_sr_levels[best_level_index];
+    
+    // Check for rejection/bounce patterns
+    bool bullish_rejection = CheckMTFBullishRejection(level.price);
+    bool bearish_rejection = CheckMTFBearishRejection(level.price);
+    
+    if(bullish_rejection && level.is_support) {
+        signal.signal_type = SIGNAL_TYPE_BUY;
+        signal.entry_price = current_price;
+        signal.stop_loss = level.price - (g_atr_value * 1.5);
+        signal.take_profit = current_price + (g_atr_value * 3.0);
+    }
+    else if(bearish_rejection && level.is_resistance) {
+        signal.signal_type = SIGNAL_TYPE_SELL;
+        signal.entry_price = current_price;
+        signal.stop_loss = level.price + (g_atr_value * 1.5);
+        signal.take_profit = current_price - (g_atr_value * 3.0);
+    }
+    
+    if(signal.signal_type != SIGNAL_TYPE_HOLD) {
+        // Calculate enhanced confidence
+        signal.confidence_level = CalculateEnhancedMTFConfidence(level, best_interaction_score);
+        signal.is_valid = (signal.confidence_level >= MinConfidenceThreshold);
+        signal.strategy_name = "Enhanced Multi-Timeframe S/R";
+        signal.timestamp = TimeCurrent();
+        
+        // Add confluence bonuses
+        if(level.is_fibonacci_level) signal.confidence_level += 0.05;
+        if(level.is_vwap_level) signal.confidence_level += 0.05;
+        if(level.volume_profile_strength > 0.5) signal.confidence_level += 0.05;
+        if(level.is_major_level) signal.confidence_level += 0.1;
+        
+        signal.confidence_level = MathMin(0.99, signal.confidence_level);
+        
+        if(EnableDebugLogging && signal.is_valid) {
+            Print("Enhanced MTF S/R Signal: ", EnumToString(signal.signal_type), 
+                  " at ", signal.entry_price, " with confidence ", signal.confidence_level);
+        }
+    }
+    
+    return signal;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Multi-Timeframe Interaction Score                     |
+//+------------------------------------------------------------------+
+double CalculateMTFInteractionScore(int level_index, double current_price) {
+    if(level_index < 0 || level_index >= g_mtf_sr_count) return 0.0;
+    
+    MultiTimeframeSRLevel level;
+    level = g_mtf_sr_levels[level_index];
+    
+    // Distance factor (closer = better)
+    double distance = MathAbs(current_price - level.price);
+    double distance_factor = MathMax(0.0, 1.0 - (distance / (g_atr_value * 0.5)));
+    
+    // Confluence factor
+    double confluence_factor = level.confluence_score;
+    
+    // Time persistence factor
+    double time_factor = MathMin(1.0, (TimeCurrent() - level.formation_time) / 86400.0); // Days
+    
+    // Statistical significance factor
+    double stats_factor = level.statistical_significance;
+    
+    // Multi-timeframe weight factor
+    double mtf_factor = 0.0;
+    for(int i = 0; i < 8; i++) {
+        mtf_factor += level.timeframe_weights[i];
+    }
+    mtf_factor = MathMin(1.0, mtf_factor);
+    
+    // Combined score
+    double interaction_score = (distance_factor * 0.3) + 
+                              (confluence_factor * 0.25) + 
+                              (time_factor * 0.15) + 
+                              (stats_factor * 0.15) + 
+                              (mtf_factor * 0.15);
+    
+    return MathMin(1.0, interaction_score);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Enhanced Multi-Timeframe Confidence                   |
+//+------------------------------------------------------------------+
+double CalculateEnhancedMTFConfidence(MultiTimeframeSRLevel &level, double interaction_score) {
+    double base_confidence = interaction_score;
+    
+    // Major level bonus
+    if(level.is_major_level) base_confidence += 0.1;
+    
+    // Multiple timeframe confirmation bonus
+    int active_timeframes = 0;
+    for(int i = 0; i < 8; i++) {
+        if(level.timeframe_weights[i] > 0) active_timeframes++;
+    }
+    if(active_timeframes >= 3) base_confidence += 0.05;
+    if(active_timeframes >= 4) base_confidence += 0.05;
+    
+    // Statistical significance bonus
+    if(level.statistical_significance > 0.3) base_confidence += 0.05;
+    
+    // Touch count bonus
+    if(level.touch_count_total >= 3) base_confidence += 0.03;
+    if(level.touch_count_total >= 5) base_confidence += 0.03;
+    
+    return MathMin(0.99, base_confidence);
+}
+
+//+------------------------------------------------------------------+
+//| Check Multi-Timeframe Bullish Rejection                         |
+//+------------------------------------------------------------------+
+bool CheckMTFBullishRejection(double level_price) {
+    // Check last 3 bars for bullish rejection pattern
+    for(int i = 1; i <= 3; i++) {
+        double low = iLow(_Symbol, _Period, i);
+        double close = iClose(_Symbol, _Period, i);
+        double open = iOpen(_Symbol, _Period, i);
+        
+        // Price touched level and closed above it
+        if(MathAbs(low - level_price) <= g_atr_value * 0.3 && close > level_price && close > open) {
+            return true;
+        }
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check Multi-Timeframe Bearish Rejection                         |
+//+------------------------------------------------------------------+
+bool CheckMTFBearishRejection(double level_price) {
+    // Check last 3 bars for bearish rejection pattern
+    for(int i = 1; i <= 3; i++) {
+        double high = iHigh(_Symbol, _Period, i);
+        double close = iClose(_Symbol, _Period, i);
+        double open = iOpen(_Symbol, _Period, i);
+        
+        // Price touched level and closed below it
+        if(MathAbs(high - level_price) <= g_atr_value * 0.3 && close < level_price && close < open) {
+            return true;
+        }
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Helper Functions for Multi-Timeframe Analysis                   |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Check if bar is swing high for specific timeframe               |
+//+------------------------------------------------------------------+
+bool IsSwingHighMTF(string symbol, ENUM_TIMEFRAMES timeframe, int bar_index, int swing_length) {
+    if(bar_index < swing_length || bar_index >= iBars(symbol, timeframe) - swing_length) return false;
+    
+    double center_high = iHigh(symbol, timeframe, bar_index);
+    
+    // Check left side
+    for(int i = 1; i <= swing_length; i++) {
+        if(iHigh(symbol, timeframe, bar_index + i) >= center_high) return false;
+    }
+    
+    // Check right side
+    for(int i = 1; i <= swing_length; i++) {
+        if(iHigh(symbol, timeframe, bar_index - i) >= center_high) return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if bar is swing low for specific timeframe                |
+//+------------------------------------------------------------------+
+bool IsSwingLowMTF(string symbol, ENUM_TIMEFRAMES timeframe, int bar_index, int swing_length) {
+    if(bar_index < swing_length || bar_index >= iBars(symbol, timeframe) - swing_length) return false;
+    
+    double center_low = iLow(symbol, timeframe, bar_index);
+    
+    // Check left side
+    for(int i = 1; i <= swing_length; i++) {
+        if(iLow(symbol, timeframe, bar_index + i) <= center_low) return false;
+    }
+    
+    // Check right side
+    for(int i = 1; i <= swing_length; i++) {
+        if(iLow(symbol, timeframe, bar_index - i) <= center_low) return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Get Session Start Time for Timeframe                            |
+//+------------------------------------------------------------------+
+datetime GetSessionStart(ENUM_TIMEFRAMES timeframe) {
+    datetime current_time = TimeCurrent();
+    MqlDateTime dt;
+    TimeToStruct(current_time, dt);
+    
+    if(timeframe == PERIOD_D1) {
+        // Daily session starts at midnight
+        dt.hour = 0;
+        dt.min = 0;
+        dt.sec = 0;
+    } else if(timeframe == PERIOD_H4) {
+        // 4H sessions: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00
+        int session_hour = (dt.hour / 4) * 4;
+        dt.hour = session_hour;
+        dt.min = 0;
+        dt.sec = 0;
+    }
+    
+    return StructToTime(dt);
+}
+
+//+------------------------------------------------------------------+
+//| Get Number of Bars in Current Session                           |
+//+------------------------------------------------------------------+
+int GetSessionBars(ENUM_TIMEFRAMES timeframe, datetime session_start) {
+    int total_bars = iBars(_Symbol, timeframe);
+    int session_bars = 0;
+    
+    for(int i = 0; i < total_bars; i++) {
+        datetime bar_time = iTime(_Symbol, timeframe, i);
+        if(bar_time >= session_start) {
+            session_bars++;
+        } else {
+            break;
+        }
+    }
+    
+    return session_bars;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Confluence Zones                                      |
+//+------------------------------------------------------------------+
+void CalculateConfluenceZones() {
+    g_mtf_analysis.confluence_count = 0;
+    
+    // Group nearby levels into confluence zones
+    for(int i = 0; i < g_mtf_sr_count; i++) {
+        if(g_mtf_sr_levels[i].confluence_score < 0.5) continue;
+        
+        bool zone_found = false;
+        double tolerance = g_atr_value * 0.5;
+        
+        // Check if this level is near an existing confluence zone
+        for(int j = 0; j < g_mtf_analysis.confluence_count; j++) {
+            if(MathAbs(g_mtf_sr_levels[i].price - g_mtf_analysis.confluence_zones[j]) <= tolerance) {
+                zone_found = true;
+                break;
+            }
+        }
+        
+        // Add new confluence zone
+        if(!zone_found && g_mtf_analysis.confluence_count < 10) {
+            g_mtf_analysis.confluence_zones[g_mtf_analysis.confluence_count] = g_mtf_sr_levels[i].price;
+            g_mtf_analysis.confluence_count++;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Trend Alignment Across Timeframes                     |
+//+------------------------------------------------------------------+
+void CalculateTrendAlignment() {
+    int bullish_count = 0;
+    int bearish_count = 0;
+    
+    // Analyze trend for each timeframe
+    for(int i = 0; i < 5; i++) {
+        ENUM_TIMEFRAMES tf = g_analysis_timeframes[i];
+        ENUM_SIGNAL_TYPE trend = GetTimeframeTrend(tf);
+        
+        if(trend == SIGNAL_TYPE_BUY) bullish_count++;
+        else if(trend == SIGNAL_TYPE_SELL) bearish_count++;
+    }
+    
+    // Determine primary and secondary trends
+    if(bullish_count > bearish_count) {
+        g_mtf_analysis.primary_trend = SIGNAL_TYPE_BUY;
+        g_mtf_analysis.secondary_trend = (bearish_count > 0) ? SIGNAL_TYPE_SELL : SIGNAL_TYPE_HOLD;
+    } else if(bearish_count > bullish_count) {
+        g_mtf_analysis.primary_trend = SIGNAL_TYPE_SELL;
+        g_mtf_analysis.secondary_trend = (bullish_count > 0) ? SIGNAL_TYPE_BUY : SIGNAL_TYPE_HOLD;
+    } else {
+        g_mtf_analysis.primary_trend = SIGNAL_TYPE_HOLD;
+        g_mtf_analysis.secondary_trend = SIGNAL_TYPE_HOLD;
+    }
+    
+    // Calculate alignment score
+    int total_timeframes = 5;
+    int aligned_count = MathMax(bullish_count, bearish_count);
+    g_mtf_analysis.trend_alignment_score = (double)aligned_count / total_timeframes;
+}
+
+//+------------------------------------------------------------------+
+//| Get Trend for Specific Timeframe                                |
+//+------------------------------------------------------------------+
+ENUM_SIGNAL_TYPE GetTimeframeTrend(ENUM_TIMEFRAMES timeframe) {
+    int bars = iBars(_Symbol, timeframe);
+    if(bars < 20) return SIGNAL_TYPE_HOLD;
+    
+    // Simple trend detection using moving averages
+    double ma_fast = 0, ma_slow = 0;
+    int fast_period = 10, slow_period = 20;
+    
+    // Calculate fast MA
+    for(int i = 1; i <= fast_period; i++) {
+        ma_fast += iClose(_Symbol, timeframe, i);
+    }
+    ma_fast /= fast_period;
+    
+    // Calculate slow MA
+    for(int i = 1; i <= slow_period; i++) {
+        ma_slow += iClose(_Symbol, timeframe, i);
+    }
+    ma_slow /= slow_period;
+    
+    // Determine trend
+    if(ma_fast > ma_slow) return SIGNAL_TYPE_BUY;
+    else if(ma_fast < ma_slow) return SIGNAL_TYPE_SELL;
+    else return SIGNAL_TYPE_HOLD;
+}
+
+//+------------------------------------------------------------------+
+//| Clean up Multi-Timeframe S/R Levels                             |
+//+------------------------------------------------------------------+
+void CleanupMultiTimeframeSRLevels() {
+    for(int i = g_mtf_sr_count - 1; i >= 0; i--) {
+        bool should_remove = false;
+        
+        // Remove levels older than 7 days
+        if(TimeCurrent() - g_mtf_sr_levels[i].formation_time > 604800) {
+            should_remove = true;
+        }
+        // Remove weak levels with low confluence
+        else if(g_mtf_sr_levels[i].confluence_score < 0.2 && 
+                TimeCurrent() - g_mtf_sr_levels[i].formation_time > 86400) {
+            should_remove = true;
+        }
+        
+        if(should_remove) {
+            ObjectDelete(0, g_mtf_sr_levels[i].obj_name);
+            
+            // Shift array elements
+            for(int j = i; j < g_mtf_sr_count - 1; j++) {
+                g_mtf_sr_levels[j] = g_mtf_sr_levels[j + 1];
+            }
+            g_mtf_sr_count--;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Create Visual Representation for MTF S/R Level                  |
+//+------------------------------------------------------------------+
+void CreateMTFSRLevelVisual(MultiTimeframeSRLevel &level) {
+    // Create horizontal line
+    ObjectCreate(0, level.obj_name, OBJ_HLINE, 0, 0, level.price);
+    
+    // Set color based on level type and strength
+    color line_color = clrGray;
+    if(level.is_major_level) {
+        line_color = level.is_support ? clrBlue : clrRed;
+    } else {
+        line_color = level.is_support ? clrLightBlue : clrLightCoral;
+    }
+    
+    // Adjust color for special levels
+    if(level.is_fibonacci_level) line_color = clrGold;
+    if(level.is_vwap_level) line_color = clrPurple;
+    
+    ObjectSetInteger(0, level.obj_name, OBJPROP_COLOR, line_color);
+    ObjectSetInteger(0, level.obj_name, OBJPROP_WIDTH, level.is_major_level ? 3 : 2);
+    ObjectSetInteger(0, level.obj_name, OBJPROP_STYLE, STYLE_SOLID);
+    
+    // Create label with level information
+    string label_name = level.obj_name + "_label";
+    ObjectCreate(0, label_name, OBJ_TEXT, 0, TimeCurrent(), level.price);
+    
+    string label_text = "MTF S/R (" + DoubleToString(level.confluence_score, 2) + ")";
+    if(level.is_fibonacci_level) label_text += " FIB";
+    if(level.is_vwap_level) label_text += " VWAP";
+    if(level.volume_profile_strength > 0.5) label_text += " VOL";
+    
+    ObjectSetString(0, label_name, OBJPROP_TEXT, label_text);
+    ObjectSetInteger(0, label_name, OBJPROP_COLOR, line_color);
+    ObjectSetInteger(0, label_name, OBJPROP_FONTSIZE, 8);
+}
+
+//+------------------------------------------------------------------+
+//| Create Visual Representation for Fibonacci Level               |
+//+------------------------------------------------------------------+
+void CreateFibonacciLevelVisual(FibonacciLevel &level) {
+    ObjectCreate(0, level.obj_name, OBJ_HLINE, 0, 0, level.price);
+    ObjectSetInteger(0, level.obj_name, OBJPROP_COLOR, clrGold);
+    ObjectSetInteger(0, level.obj_name, OBJPROP_WIDTH, 1);
+    ObjectSetInteger(0, level.obj_name, OBJPROP_STYLE, STYLE_DOT);
+    
+    // Create label
+    string label_name = level.obj_name + "_label";
+    ObjectCreate(0, label_name, OBJ_TEXT, 0, TimeCurrent(), level.price);
+    ObjectSetString(0, label_name, OBJPROP_TEXT, "Fib " + DoubleToString(level.ratio, 3));
+    ObjectSetInteger(0, label_name, OBJPROP_COLOR, clrGold);
+    ObjectSetInteger(0, label_name, OBJPROP_FONTSIZE, 7);
 }
 
 //+------------------------------------------------------------------+
