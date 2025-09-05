@@ -39,6 +39,7 @@ enum ENUM_STRATEGY_TYPE {
 struct TradingSignal {
     ENUM_SIGNAL_TYPE signal_type;    // Type of signal (HOLD, BUY, SELL)
     double confidence_level;          // Confidence level (0.0 to 1.0)
+    double entry_price;               // Entry price
     double stop_loss;                 // Stop loss price
     double take_profit;               // Take profit price
     string parameters;                // Additional parameters
@@ -82,10 +83,15 @@ struct FairValueGap {
     datetime time_created;
     double gap_high;
     double gap_low;
+    double high_price;                // Alias for gap_high
+    double low_price;                 // Alias for gap_low
     double gap_size;
+    double size;                      // Alias for gap_size
     bool is_bullish;
     bool is_filled;
     double fill_percentage;
+    long volume_at_creation;          // Volume when gap was created
+    double atr_ratio;                 // Gap size to ATR ratio
 
     // Enhanced professional metrics
     double gap_size_ratio;            // Gap Size / ATR
@@ -428,6 +434,39 @@ struct SignalHistory {
 SignalHistory g_signal_history[100];
 int g_signal_history_count = 0;
 
+// Backtesting framework integration
+input bool EnableBacktesting = false;           // Enable backtesting mode
+input datetime BacktestStartDate = D'2023.01.01'; // Backtest start date
+input datetime BacktestEndDate = D'2024.01.01';   // Backtest end date
+input bool EnableBacktestExport = true;         // Export backtest results
+input string BacktestResultsFile = "backtest_results.csv"; // Results filename
+input bool RunMonteCarloAfterBacktest = false;   // Run Monte Carlo after backtest
+
+// Backtesting state variables
+bool g_backtesting_active = false;
+double g_backtest_initial_balance = 0;
+double g_backtest_current_balance = 0;
+int g_backtest_total_trades = 0;
+int g_backtest_winning_trades = 0;
+double g_backtest_max_drawdown = 0;
+double g_backtest_peak_balance = 0;
+
+// Backtesting trade structure
+struct BacktestTrade {
+    datetime entry_time;
+    datetime exit_time;
+    double entry_price;
+    double exit_price;
+    double profit_loss;
+    double confidence_score;
+    string strategy_name;
+    ENUM_SIGNAL_TYPE signal_type;
+    bool is_winner;
+};
+
+BacktestTrade g_backtest_trades[10000];
+int g_backtest_trade_count = 0;
+
 // Signal verification tracking
 struct SignalVerification {
     datetime timestamp;
@@ -495,8 +534,17 @@ int OnInit() {
     // Uncomment the line below to test pattern cleanup system
     // TestPatternCleanup();
 
+    // Initialize backtesting if enabled
+    if(EnableBacktesting) {
+        InitializeBacktesting();
+    }
+
     Print("=== Consolidated Misape Bot Initialized Successfully ===");
     Print("=== ONE PATTERN PER STRATEGY MODE ACTIVE ===");
+    if(EnableBacktesting) {
+        Print("=== BACKTESTING MODE ENABLED ===");
+        Print("Backtest Period: ", TimeToString(BacktestStartDate), " to ", TimeToString(BacktestEndDate));
+    }
     return INIT_SUCCEEDED;
 }
 
@@ -533,6 +581,12 @@ void OnDeinit(const int reason) {
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick() {
+    // Handle backtesting mode
+    if(EnableBacktesting && g_backtesting_active) {
+        ProcessBacktestTick();
+        return;
+    }
+    
     // Update ATR value
     UpdateATR();
     
@@ -920,11 +974,18 @@ void ExecuteTrade(ENUM_SIGNAL_TYPE signal_type, double confidence, double sl, do
         if(sl > 0 && sl >= ask) sl = ask - g_atr_value;
         if(tp > 0 && tp <= ask) tp = ask + g_atr_value * 2;
 
-        result = trade.Buy(lot_size, _Symbol, ask, sl, tp, comment);
+        if(EnableBacktesting && g_backtesting_active) {
+            // Record backtest trade instead of executing real trade
+            RecordBacktestTrade(signal_type, ask, sl, tp, lot_size, confidence, comment);
+            result = true;
+        } else {
+            result = trade.Buy(lot_size, _Symbol, ask, sl, tp, comment);
+        }
+        
         if(result) {
             Print("BUY order executed: Lot=", lot_size, " Price=", ask, " SL=", sl, " TP=", tp, " Confidence=", confidence);
             // Initialize trailing stop for the new position
-            if(EnableTrailingStop) {
+            if(EnableTrailingStop && !g_backtesting_active) {
                 InitializeTrailingStop(trade.ResultOrder(), sl);
             }
         }
@@ -934,11 +995,18 @@ void ExecuteTrade(ENUM_SIGNAL_TYPE signal_type, double confidence, double sl, do
         if(sl > 0 && sl <= bid) sl = bid + g_atr_value;
         if(tp > 0 && tp >= bid) tp = bid - g_atr_value * 2;
 
-        result = trade.Sell(lot_size, _Symbol, bid, sl, tp, comment);
+        if(EnableBacktesting && g_backtesting_active) {
+            // Record backtest trade instead of executing real trade
+            RecordBacktestTrade(signal_type, bid, sl, tp, lot_size, confidence, comment);
+            result = true;
+        } else {
+            result = trade.Sell(lot_size, _Symbol, bid, sl, tp, comment);
+        }
+        
         if(result) {
             Print("SELL order executed: Lot=", lot_size, " Price=", bid, " SL=", sl, " TP=", tp, " Confidence=", confidence);
             // Initialize trailing stop for the new position
-            if(EnableTrailingStop) {
+            if(EnableTrailingStop && !g_backtesting_active) {
                 InitializeTrailingStop(trade.ResultOrder(), sl);
             }
         }
@@ -1335,7 +1403,7 @@ double CalculateEnhancedBlockStrength(OrderBlock &block) {
     // Strength = (VPIN × Volume Factor) + (Time Factor × Size Factor) + Multi-timeframe Confluence
 
     // Calculate VPIN score for institutional validation
-    double vpin_score = CalculateVPINScore();
+    double vpin_score = CalculateVPINScore(1, 20);
     
     // Enhanced volume factor with VPIN integration
     double volume_factor = 0.0;
@@ -1344,7 +1412,7 @@ double CalculateEnhancedBlockStrength(OrderBlock &block) {
     }
 
     // Enhanced imbalance factor with institutional flow probability
-    double institutional_flow = CalculateInstitutionalFlowProbability();
+    double institutional_flow = CalculateInstitutionalFlowProbability(1);
     double imbalance_factor = block.volume_imbalance_ratio * institutional_flow;
     
     double size_factor = (block.high_price - block.low_price) / (g_atr_value > 0 ? g_atr_value : 0.0001);
@@ -1385,11 +1453,11 @@ double CalculateBlockConfidence(OrderBlock &block) {
     double statistical_significance = CalculateOrderBlockStatisticalSignificance(block);
     
     // Volume validation with VPIN integration
-    double vpin_validation = CalculateVPINScore();
+    double vpin_validation = CalculateVPINScore(1, 20);
     double enhanced_volume_bonus = block.volume_validated ? (0.15 + vpin_validation * 0.1) : 0.0;
     
     // Institutional flow confirmation
-    double institutional_confirmation = CalculateInstitutionalFlowProbability();
+    double institutional_confirmation = CalculateInstitutionalFlowProbability(1);
     
     // Final confidence calculation
     double confidence = (base_confidence * mtf_factor * statistical_significance) + 
@@ -1468,8 +1536,8 @@ double CalculateVolumeImbalanceRatio(datetime time, ENUM_TIMEFRAMES tf) {
     double directional_strength = MathAbs(price_change) / total_range;
     
     // Institutional flow indicators
-    double institutional_flow = CalculateInstitutionalFlowProbability();
-    double vpin_factor = CalculateVPINScore();
+    double institutional_flow = CalculateInstitutionalFlowProbability(bar_index);
+    double vpin_factor = CalculateVPINScore(bar_index, 20);
     
     // Volume profile analysis
     double volume_profile_score = CalculateVolumeProfileScore(bar_index, tf);
@@ -1726,8 +1794,8 @@ TradingSignal GenerateOrderBlockSignal() {
     // Multi-timeframe analysis
     double h4_trend_score = AnalyzeH4TrendContext();
     double h4_confluence = DetectH4FVGConfluence();
-    double vpin_score = CalculateVPINScore();
-    double institutional_flow = CalculateInstitutionalFlowProbability();
+    double vpin_score = CalculateVPINScore(1, 20);
+    double institutional_flow = CalculateInstitutionalFlowProbability(1);
 
     // Find the best fresh, unbroken order block with enhanced scoring
     int best_block = -1;
@@ -1889,7 +1957,7 @@ void RunFairValueGapStrategy() {
 }
 
 //+------------------------------------------------------------------+
-//| Generate Enhanced Multi-Timeframe Fair Value Gap Signal         |
+//| Generate Advanced Statistical Fair Value Gap Signal             |
 //+------------------------------------------------------------------+
 TradingSignal GenerateFairValueGapSignal() {
     TradingSignal signal;
@@ -1898,6 +1966,353 @@ TradingSignal GenerateFairValueGapSignal() {
     signal.stop_loss = 0.0;
     signal.take_profit = 0.0;
     signal.parameters = "";
+    signal.strategy_name = "AdvancedFVG_Statistical";
+    
+    // Enhanced FVG detection with statistical validation
+    FairValueGap detected_gap;
+    if(!DetectAdvancedFairValueGap(detected_gap)) {
+        return signal;
+    }
+    
+    // Calculate statistical significance and market inefficiency metrics
+    double statistical_significance = CalculateFVGStatisticalSignificance(detected_gap);
+    double market_inefficiency_score = CalculateMarketInefficiencyScore(detected_gap);
+    double vpin_toxicity = CalculateVPINToxicity();
+    
+    // Multi-timeframe confluence analysis
+    double h4_trend_score = AnalyzeH4TrendContext();
+    double h4_fvg_confluence = DetectH4FVGConfluence();
+    double mtf_score = CalculateMultiTimeframeScore(detected_gap, h4_trend_score, h4_fvg_confluence);
+    
+    // Advanced composite scoring with statistical weighting
+    double composite_score = (statistical_significance * 0.35) + 
+                           (market_inefficiency_score * 0.25) + 
+                           (mtf_score * 0.20) + 
+                           (vpin_toxicity * 0.20);
+    
+    // Statistical confidence interval for signal validation
+    double confidence_interval = CalculateFVGConfidenceInterval(detected_gap);
+    double adjusted_threshold = 0.65 + confidence_interval;
+    
+    if(composite_score >= adjusted_threshold) {
+        signal.signal_type = detected_gap.is_bullish ? SIGNAL_TYPE_BUY : SIGNAL_TYPE_SELL;
+        signal.confidence_level = composite_score;
+        
+        // Advanced statistical stop loss and take profit
+        double statistical_sl = CalculateStatisticalStopLoss(detected_gap, confidence_interval);
+        double statistical_tp = CalculateStatisticalTakeProfit(detected_gap, confidence_interval);
+        
+        if(detected_gap.is_bullish) {
+            signal.entry_price = detected_gap.gap_low;
+            signal.stop_loss = signal.entry_price - statistical_sl;
+            signal.take_profit = signal.entry_price + statistical_tp;
+        } else {
+            signal.entry_price = detected_gap.gap_high;
+            signal.stop_loss = signal.entry_price + statistical_sl;
+            signal.take_profit = signal.entry_price - statistical_tp;
+        }
+        
+        signal.parameters = "AdvFVG_" + (detected_gap.is_bullish ? "Bull" : "Bear") + 
+                          "_StatSig:" + DoubleToString(statistical_significance, 3) + 
+                          "_Ineffic:" + DoubleToString(market_inefficiency_score, 3) + 
+                          "_VPIN:" + DoubleToString(vpin_toxicity, 3) + 
+                          "_MTF:" + DoubleToString(mtf_score, 3) + 
+                          "_CI:" + DoubleToString(confidence_interval, 3);
+        
+        signal.is_valid = true;
+    }
+    
+    return signal;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Advanced Fair Value Gap with Statistical Validation      |
+//+------------------------------------------------------------------+
+bool DetectAdvancedFairValueGap(FairValueGap &gap) {
+    // Enhanced FVG detection with statistical filtering
+    for(int i = 2; i < iBars(_Symbol, PERIOD_CURRENT) - 1; i++) {
+        double high_prev = iHigh(_Symbol, PERIOD_CURRENT, i + 1);
+        double low_prev = iLow(_Symbol, PERIOD_CURRENT, i + 1);
+        double high_current = iHigh(_Symbol, PERIOD_CURRENT, i);
+        double low_current = iLow(_Symbol, PERIOD_CURRENT, i);
+        double high_next = iHigh(_Symbol, PERIOD_CURRENT, i - 1);
+        double low_next = iLow(_Symbol, PERIOD_CURRENT, i - 1);
+        
+        // Check for bullish FVG with statistical significance
+        if(high_prev < low_next) {
+            double gap_size = low_next - high_prev;
+            double atr_value = iATR(_Symbol, PERIOD_CURRENT, 14, i);
+            
+            // Statistical filter: gap must be significant relative to ATR
+            if(gap_size > atr_value * 0.25) {
+                gap.high_price = low_next;
+                gap.low_price = high_prev;
+                gap.time_created = iTime(_Symbol, PERIOD_CURRENT, i);
+                gap.is_bullish = true;
+                gap.size = gap_size;
+                gap.volume_at_creation = iVolume(_Symbol, PERIOD_CURRENT, i);
+                gap.atr_ratio = gap_size / atr_value;
+                return true;
+            }
+        }
+        // Check for bearish FVG with statistical significance
+        else if(low_prev > high_next) {
+            double gap_size = low_prev - high_next;
+            double atr_value = iATR(_Symbol, PERIOD_CURRENT, 14, i);
+            
+            // Statistical filter: gap must be significant relative to ATR
+            if(gap_size > atr_value * 0.25) {
+                gap.high_price = low_prev;
+                gap.low_price = high_next;
+                gap.time_created = iTime(_Symbol, PERIOD_CURRENT, i);
+                gap.is_bullish = false;
+                gap.size = gap_size;
+                gap.volume_at_creation = iVolume(_Symbol, PERIOD_CURRENT, i);
+                gap.atr_ratio = gap_size / atr_value;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate FVG Statistical Significance                          |
+//+------------------------------------------------------------------+
+double CalculateFVGStatisticalSignificance(FairValueGap &gap) {
+    // Statistical significance based on academic research
+    double atr_significance = MathMin(1.0, gap.atr_ratio / 2.0); // Normalize ATR ratio
+    
+    // Volume significance using z-score approach
+    double avg_volume = 0;
+    int lookback = 20;
+    for(int i = 1; i <= lookback; i++) {
+        avg_volume += (double)iVolume(_Symbol, PERIOD_CURRENT, i);
+    }
+    avg_volume /= lookback;
+    
+    double volume_z_score = 0;
+    if(avg_volume > 0) {
+        double volume_std = CalculateVolumeStandardDeviation(lookback);
+        if(volume_std > 0) {
+            volume_z_score = ((double)gap.volume_at_creation - avg_volume) / volume_std;
+        }
+    }
+    
+    double volume_significance = MathMin(1.0, MathAbs(volume_z_score) / 2.0);
+    
+    // Time-based significance (market session analysis)
+    double time_significance = CalculateTimeBasedSignificance(gap.time_created);
+    
+    // Combined statistical significance
+    double significance = (atr_significance * 0.4) + 
+                         (volume_significance * 0.4) + 
+                         (time_significance * 0.2);
+    
+    return MathMin(1.0, significance);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Market Inefficiency Score                             |
+//+------------------------------------------------------------------+
+double CalculateMarketInefficiencyScore(FairValueGap &gap) {
+    // Market inefficiency based on academic microstructure research
+    double price_impact = gap.size / iClose(_Symbol, PERIOD_CURRENT, 1);
+    double normalized_impact = MathMin(1.0, price_impact * 10000); // Normalize to basis points
+    
+    // Liquidity gap analysis
+    double liquidity_score = CalculateLiquidityGapScore(gap);
+    
+    // Order flow imbalance during gap formation
+    double flow_imbalance = CalculateOrderFlowImbalance(gap.time_created);
+    
+    // Market state analysis (trending vs ranging)
+    double market_state_score = AnalyzeMarketStateForFVG();
+    
+    double inefficiency_score = (normalized_impact * 0.3) + 
+                               (liquidity_score * 0.3) + 
+                               (flow_imbalance * 0.25) + 
+                               (market_state_score * 0.15);
+    
+    return MathMin(1.0, inefficiency_score);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate VPIN Toxicity for FVG                                 |
+//+------------------------------------------------------------------+
+double CalculateVPINToxicity() {
+    // VPIN-based toxicity measurement for informed trading detection
+    double vpin_score = CalculateVPINScore(1, 20);
+    double institutional_flow = CalculateInstitutionalFlowProbability(1);
+    
+    // Toxicity increases with higher VPIN and institutional activity
+    double toxicity = (vpin_score * 0.6) + (institutional_flow * 0.4);
+    
+    // Apply non-linear scaling for extreme values
+    if(toxicity > 0.8) {
+        toxicity = 0.8 + (toxicity - 0.8) * 0.5; // Dampen extreme values
+    }
+    
+    return MathMin(1.0, toxicity);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate FVG Confidence Interval                               |
+//+------------------------------------------------------------------+
+double CalculateFVGConfidenceInterval(FairValueGap &gap) {
+    // Statistical confidence interval for FVG fill probability
+    double historical_fill_rate = CalculateHistoricalFVGFillRate(gap);
+    double sample_size = 30; // Historical sample for confidence calculation
+    
+    // Binomial confidence interval calculation
+    double z_score = 1.96; // 95% confidence level
+    double variance = historical_fill_rate * (1 - historical_fill_rate);
+    double std_error = MathSqrt(variance / sample_size);
+    
+    double confidence_interval = z_score * std_error;
+    
+    return MathMin(0.3, confidence_interval);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Volume Standard Deviation                             |
+//+------------------------------------------------------------------+
+double CalculateVolumeStandardDeviation(int period) {
+    double sum = 0, sum_sq = 0;
+    
+    for(int i = 1; i <= period; i++) {
+        double volume = (double)iVolume(_Symbol, PERIOD_CURRENT, i);
+        sum += volume;
+        sum_sq += volume * volume;
+    }
+    
+    double mean = sum / period;
+    double variance = (sum_sq / period) - (mean * mean);
+    
+    return MathSqrt(MathMax(0, variance));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Time-Based Significance                               |
+//+------------------------------------------------------------------+
+double CalculateTimeBasedSignificance(datetime gap_time) {
+    MqlDateTime dt;
+    TimeToStruct(gap_time, dt);
+    
+    double significance = 0.5; // Base significance
+    
+    // Higher significance during active trading sessions
+    if((dt.hour >= 8 && dt.hour <= 12) || (dt.hour >= 13 && dt.hour <= 17)) {
+        significance += 0.3; // London/NY session
+    }
+    
+    // Lower significance during low liquidity periods
+    if(dt.hour >= 22 || dt.hour <= 6) {
+        significance -= 0.2; // Asian session overlap
+    }
+    
+    return MathMin(1.0, MathMax(0.1, significance));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Liquidity Gap Score                                   |
+//+------------------------------------------------------------------+
+double CalculateLiquidityGapScore(FairValueGap &gap) {
+    // Analyze liquidity conditions during gap formation
+    double spread_ratio = CalculateSpreadRatio(gap.time_created);
+    double volume_ratio = (double)gap.volume_at_creation / CalculateAverageVolume(20);
+    
+    // Higher score for wider spreads and lower volume (liquidity gaps)
+    double liquidity_score = (spread_ratio * 0.6) + ((1.0 / MathMax(1.0, volume_ratio)) * 0.4);
+    
+    return MathMin(1.0, liquidity_score);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Order Flow Imbalance                                  |
+//+------------------------------------------------------------------+
+double CalculateOrderFlowImbalance(datetime gap_time) {
+    // Simplified order flow imbalance calculation
+    int bar_index = iBarShift(_Symbol, PERIOD_CURRENT, gap_time);
+    if(bar_index < 0) return 0.5;
+    
+    double price_change = iClose(_Symbol, PERIOD_CURRENT, bar_index) - iOpen(_Symbol, PERIOD_CURRENT, bar_index);
+    double range = iHigh(_Symbol, PERIOD_CURRENT, bar_index) - iLow(_Symbol, PERIOD_CURRENT, bar_index);
+    
+    if(range == 0) return 0.5;
+    
+    double imbalance = MathAbs(price_change) / range;
+    return MathMin(1.0, imbalance);
+}
+
+//+------------------------------------------------------------------+
+//| Analyze Market State for FVG                                    |
+//+------------------------------------------------------------------+
+double AnalyzeMarketStateForFVG() {
+    // Market state analysis for FVG effectiveness
+    double ema_20 = iMA(_Symbol, PERIOD_CURRENT, 20, 0, MODE_EMA, PRICE_CLOSE, 1);
+    double ema_50 = iMA(_Symbol, PERIOD_CURRENT, 50, 0, MODE_EMA, PRICE_CLOSE, 1);
+    double current_price = iClose(_Symbol, PERIOD_CURRENT, 1);
+    
+    // Trending market favors FVG strategies
+    double trend_strength = MathAbs(ema_20 - ema_50) / ema_50;
+    double price_position = MathAbs(current_price - ema_20) / ema_20;
+    
+    double market_state_score = (trend_strength * 0.6) + (price_position * 0.4);
+    
+    return MathMin(1.0, market_state_score * 5.0); // Scale up for sensitivity
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Historical FVG Fill Rate                              |
+//+------------------------------------------------------------------+
+double CalculateHistoricalFVGFillRate(FairValueGap &gap) {
+    // Simplified historical fill rate calculation
+    // In practice, this would analyze historical FVG patterns
+    double base_fill_rate = 0.75; // Research-based average fill rate
+    
+    // Adjust based on gap characteristics
+    if(gap.atr_ratio > 1.5) {
+        base_fill_rate -= 0.1; // Larger gaps fill less frequently
+    }
+    if(gap.atr_ratio < 0.5) {
+        base_fill_rate += 0.1; // Smaller gaps fill more frequently
+    }
+    
+    return MathMin(0.95, MathMax(0.5, base_fill_rate));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Spread Ratio                                          |
+//+------------------------------------------------------------------+
+double CalculateSpreadRatio(datetime time) {
+    // Simplified spread calculation
+    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    double spread = ask - bid;
+    double mid_price = (ask + bid) / 2;
+    
+    if(mid_price == 0) return 0.5;
+    
+    return MathMin(1.0, (spread / mid_price) * 10000); // Normalize to basis points
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Average Volume                                         |
+//+------------------------------------------------------------------+
+double CalculateAverageVolume(int period) {
+    double sum = 0;
+    for(int i = 1; i <= period; i++) {
+        sum += (double)iVolume(_Symbol, PERIOD_CURRENT, i);
+    }
+    return sum / period;
+}
+
+//+------------------------------------------------------------------+
+//| Generate Enhanced Multi-Timeframe FVG Signal                    |
+//+------------------------------------------------------------------+
+TradingSignal GenerateEnhancedMultiTimeframeFVGSignal() {
+    TradingSignal signal;
     signal.strategy_name = "Fair Value Gap (Enhanced Multi-Timeframe)";
     signal.timestamp = TimeCurrent();
     signal.is_valid = false;
@@ -2152,21 +2567,6 @@ double CalculateInstitutionalFlowProbability(int bar_index) {
 }
 
 //+------------------------------------------------------------------+
-//| Calculate FVG Statistical Significance                           |
-//+------------------------------------------------------------------+
-double CalculateFVGStatisticalSignificance(FairValueGap &gap) {
-    // Combined significance based on size, volume, and market conditions
-    double size_significance = MathMin(1.0, gap.gap_size_ratio / 2.0); // Normalize gap size
-    double volume_significance = gap.volume_confirmation;
-    double probability_significance = gap.fill_probability;
-
-    // Weighted average with emphasis on fill probability
-    double significance = (size_significance * 0.2) + (volume_significance * 0.3) + (probability_significance * 0.5);
-
-    return MathMin(1.0, MathMax(0.0, significance));
-}
-
-//+------------------------------------------------------------------+
 //| Store FVG for Tracking                                           |
 //+------------------------------------------------------------------+
 void StoreFVGForTracking(FairValueGap &gap) {
@@ -2180,10 +2580,10 @@ void StoreFVGForTracking(FairValueGap &gap) {
 }
 
 //+------------------------------------------------------------------+
-//| Analyze 4H Timeframe Trend Context                              |
+//| Enhanced 4H Timeframe Trend Context Analysis                    |
 //+------------------------------------------------------------------+
 double AnalyzeH4TrendContext() {
-    // Analyze 4H timeframe for overall trend direction
+    // Enhanced 4H timeframe analysis with market structure and momentum
     ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
     
     // Calculate trend strength using multiple indicators
@@ -2192,29 +2592,81 @@ double AnalyzeH4TrendContext() {
     double ema_200_h4 = iMA(_Symbol, h4_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE, 1);
     
     double current_price_h4 = iClose(_Symbol, h4_timeframe, 1);
+    double prev_price_h4 = iClose(_Symbol, h4_timeframe, 2);
     
-    // Calculate trend alignment score
+    // Calculate enhanced trend alignment score
     double trend_score = 0.0;
     
-    // EMA alignment (40% weight)
-    if(ema_20_h4 > ema_50_h4 && ema_50_h4 > ema_200_h4) {
-        trend_score += 0.4; // Bullish alignment
-    } else if(ema_20_h4 < ema_50_h4 && ema_50_h4 < ema_200_h4) {
-        trend_score += 0.4; // Bearish alignment
+    // EMA alignment with slope analysis (35% weight)
+    double ema_slope_20 = (ema_20_h4 - iMA(_Symbol, h4_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE, 5)) / 4;
+    double ema_slope_50 = (ema_50_h4 - iMA(_Symbol, h4_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE, 5)) / 4;
+    
+    if(ema_20_h4 > ema_50_h4 && ema_50_h4 > ema_200_h4 && ema_slope_20 > 0 && ema_slope_50 > 0) {
+        trend_score += 0.35; // Strong bullish alignment
+    } else if(ema_20_h4 < ema_50_h4 && ema_50_h4 < ema_200_h4 && ema_slope_20 < 0 && ema_slope_50 < 0) {
+        trend_score += 0.35; // Strong bearish alignment
     }
     
-    // Price position relative to EMAs (30% weight)
-    if(current_price_h4 > ema_20_h4 && current_price_h4 > ema_50_h4) {
-        trend_score += 0.3;
+    // Market structure analysis (25% weight)
+    double structure_score = AnalyzeH4MarketStructure();
+    trend_score += structure_score * 0.25;
+    
+    // Price momentum and position (20% weight)
+    double price_momentum = (current_price_h4 - prev_price_h4) / prev_price_h4;
+    if(current_price_h4 > ema_20_h4 && price_momentum > 0) {
+        trend_score += 0.2; // Bullish momentum
+    } else if(current_price_h4 < ema_20_h4 && price_momentum < 0) {
+        trend_score += 0.2; // Bearish momentum
     }
     
-    // Momentum confirmation using RSI (30% weight)
+    // Multi-indicator confirmation (20% weight)
     double rsi_h4 = iRSI(_Symbol, h4_timeframe, 14, PRICE_CLOSE, 1);
-    if((rsi_h4 > 50 && current_price_h4 > ema_20_h4) || (rsi_h4 < 50 && current_price_h4 < ema_20_h4)) {
-        trend_score += 0.3;
+    double macd_main = iMACD(_Symbol, h4_timeframe, 12, 26, 9, PRICE_CLOSE, MODE_MAIN, 1);
+    double macd_signal = iMACD(_Symbol, h4_timeframe, 12, 26, 9, PRICE_CLOSE, MODE_SIGNAL, 1);
+    
+    bool momentum_bullish = (rsi_h4 > 50 && macd_main > macd_signal && current_price_h4 > ema_20_h4);
+    bool momentum_bearish = (rsi_h4 < 50 && macd_main < macd_signal && current_price_h4 < ema_20_h4);
+    
+    if(momentum_bullish || momentum_bearish) {
+        trend_score += 0.2;
     }
     
     return MathMin(1.0, trend_score);
+}
+
+//+------------------------------------------------------------------+
+//| Analyze 4H Market Structure                                     |
+//+------------------------------------------------------------------+
+double AnalyzeH4MarketStructure() {
+    // Analyze market structure on 4H timeframe
+    ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
+    double structure_score = 0.0;
+    
+    // Look for higher highs/lower lows pattern
+    int lookback = 10;
+    bool higher_highs = true;
+    bool lower_lows = true;
+    
+    for(int i = 2; i <= lookback; i++) {
+        double current_high = iHigh(_Symbol, h4_timeframe, i);
+        double prev_high = iHigh(_Symbol, h4_timeframe, i + 1);
+        double current_low = iLow(_Symbol, h4_timeframe, i);
+        double prev_low = iLow(_Symbol, h4_timeframe, i + 1);
+        
+        if(current_high <= prev_high) higher_highs = false;
+        if(current_low >= prev_low) lower_lows = false;
+    }
+    
+    // Score based on structure pattern
+    if(higher_highs && !lower_lows) {
+        structure_score = 1.0; // Strong uptrend structure
+    } else if(lower_lows && !higher_highs) {
+        structure_score = 1.0; // Strong downtrend structure
+    } else if(!higher_highs && !lower_lows) {
+        structure_score = 0.5; // Consolidation
+    }
+    
+    return structure_score;
 }
 
 //+------------------------------------------------------------------+
@@ -3672,6 +4124,201 @@ void InitializeDashboardPerformance() {
         g_strategy_performance[i].last_signal_time = 0;
     }
     g_signal_history_count = 0;
+}
+
+//+------------------------------------------------------------------+
+//| Initialize Backtesting Framework                                 |
+//+------------------------------------------------------------------+
+void InitializeBacktesting() {
+    Print("Initializing Backtesting Framework...");
+    
+    g_backtesting_active = true;
+    g_backtest_initial_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    g_backtest_current_balance = g_backtest_initial_balance;
+    g_backtest_peak_balance = g_backtest_initial_balance;
+    g_backtest_total_trades = 0;
+    g_backtest_winning_trades = 0;
+    g_backtest_max_drawdown = 0;
+    g_backtest_trade_count = 0;
+    
+    // Initialize backtest trades array
+    ArrayInitialize(g_backtest_trades, 0);
+    
+    Print("Backtesting initialized with balance: $", DoubleToString(g_backtest_initial_balance, 2));
+}
+
+//+------------------------------------------------------------------+
+//| Record Backtest Trade                                           |
+//+------------------------------------------------------------------+
+void RecordBacktestTrade(datetime entry_time, double entry_price, double exit_price, 
+                        double profit_loss, double confidence, string strategy, 
+                        ENUM_SIGNAL_TYPE signal_type) {
+    if(g_backtest_trade_count >= ArraySize(g_backtest_trades)) {
+        Print("Backtest trades array is full!");
+        return;
+    }
+    
+    BacktestTrade trade;
+    trade.entry_time = entry_time;
+    trade.exit_time = TimeCurrent();
+    trade.entry_price = entry_price;
+    trade.exit_price = exit_price;
+    trade.profit_loss = profit_loss;
+    trade.confidence_score = confidence;
+    trade.strategy_name = strategy;
+    trade.signal_type = signal_type;
+    trade.is_winner = profit_loss > 0;
+    
+    g_backtest_trades[g_backtest_trade_count] = trade;
+    g_backtest_trade_count++;
+    
+    // Update backtest statistics
+    g_backtest_total_trades++;
+    if(profit_loss > 0) {
+        g_backtest_winning_trades++;
+    }
+    
+    g_backtest_current_balance += profit_loss;
+    
+    // Update peak and drawdown
+    if(g_backtest_current_balance > g_backtest_peak_balance) {
+        g_backtest_peak_balance = g_backtest_current_balance;
+    } else {
+        double current_drawdown = (g_backtest_peak_balance - g_backtest_current_balance) / g_backtest_peak_balance;
+        if(current_drawdown > g_backtest_max_drawdown) {
+            g_backtest_max_drawdown = current_drawdown;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Export Backtest Results                                         |
+//+------------------------------------------------------------------+
+void ExportBacktestResults() {
+    if(!g_backtesting_active || g_backtest_trade_count == 0) {
+        Print("No backtest data to export");
+        return;
+    }
+    
+    string filename = BacktestResultsFile;
+    int file_handle = FileOpen(filename, FILE_WRITE | FILE_CSV);
+    
+    if(file_handle != INVALID_HANDLE) {
+        // Write summary header
+        FileWrite(file_handle, "=== BACKTEST SUMMARY ===");
+        FileWrite(file_handle, "Initial Balance", g_backtest_initial_balance);
+        FileWrite(file_handle, "Final Balance", g_backtest_current_balance);
+        FileWrite(file_handle, "Total Return", (g_backtest_current_balance - g_backtest_initial_balance));
+        FileWrite(file_handle, "Return %", ((g_backtest_current_balance - g_backtest_initial_balance) / g_backtest_initial_balance * 100));
+        FileWrite(file_handle, "Total Trades", g_backtest_total_trades);
+        FileWrite(file_handle, "Winning Trades", g_backtest_winning_trades);
+        FileWrite(file_handle, "Win Rate %", g_backtest_total_trades > 0 ? (double)g_backtest_winning_trades / g_backtest_total_trades * 100 : 0);
+        FileWrite(file_handle, "Max Drawdown %", g_backtest_max_drawdown * 100);
+        FileWrite(file_handle, "");
+        
+        // Write trade details header
+        FileWrite(file_handle, "=== TRADE DETAILS ===");
+        FileWrite(file_handle, "Entry_Time", "Exit_Time", "Strategy", "Signal_Type", 
+                 "Entry_Price", "Exit_Price", "Profit_Loss", "Confidence", "Is_Winner");
+        
+        // Write individual trades
+        for(int i = 0; i < g_backtest_trade_count; i++) {
+            BacktestTrade trade = g_backtest_trades[i];
+            FileWrite(file_handle,
+                     TimeToString(trade.entry_time),
+                     TimeToString(trade.exit_time),
+                     trade.strategy_name,
+                     EnumToString(trade.signal_type),
+                     trade.entry_price,
+                     trade.exit_price,
+                     trade.profit_loss,
+                     trade.confidence_score,
+                     trade.is_winner ? "Yes" : "No");
+        }
+        
+        FileClose(file_handle);
+        Print("Backtest results exported to: ", filename);
+        
+        // Print summary to console
+        Print("\n=== BACKTEST SUMMARY ===");
+        Print("Initial Balance: $", DoubleToString(g_backtest_initial_balance, 2));
+        Print("Final Balance: $", DoubleToString(g_backtest_current_balance, 2));
+        Print("Total Return: $", DoubleToString(g_backtest_current_balance - g_backtest_initial_balance, 2));
+        Print("Return %: ", DoubleToString((g_backtest_current_balance - g_backtest_initial_balance) / g_backtest_initial_balance * 100, 2), "%");
+        Print("Total Trades: ", g_backtest_total_trades);
+        Print("Winning Trades: ", g_backtest_winning_trades);
+        Print("Win Rate: ", DoubleToString(g_backtest_total_trades > 0 ? (double)g_backtest_winning_trades / g_backtest_total_trades * 100 : 0, 2), "%");
+        Print("Max Drawdown: ", DoubleToString(g_backtest_max_drawdown * 100, 2), "%");
+        
+    } else {
+        Print("Failed to create backtest results file: ", filename);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Finalize Backtesting                                            |
+//+------------------------------------------------------------------+
+void FinalizeBacktesting() {
+    if(!g_backtesting_active) return;
+    
+    Print("\nFinalizing backtesting...");
+    
+    if(EnableBacktestExport) {
+        ExportBacktestResults();
+    }
+    
+    // Run Monte Carlo simulation if enabled
+    if(RunMonteCarloAfterBacktest) {
+        Print("\nStarting Monte Carlo simulation...");
+        // Note: This would require integration with MonteCarloSimulation.mq5
+        // For now, just print a message
+        Print("Monte Carlo simulation would run here with backtest data");
+    }
+    
+    g_backtesting_active = false;
+}
+
+//+------------------------------------------------------------------+
+//| Process Backtest Tick                                           |
+//+------------------------------------------------------------------+
+void ProcessBacktestTick() {
+    static datetime last_processed_time = 0;
+    static int current_bar = 0;
+    
+    // Get current time in backtest
+    datetime current_time = iTime(_Symbol, _Period, 0);
+    
+    // Skip if we've already processed this bar
+    if(current_time == last_processed_time) return;
+    
+    // Check if we're within backtest date range
+    if(current_time < BacktestStartDate || current_time > BacktestEndDate) {
+        return;
+    }
+    
+    last_processed_time = current_time;
+    current_bar++;
+    
+    // Update ATR for backtest
+    UpdateATR();
+    
+    // Process new bar in backtest mode
+    OnNewBar();
+    
+    // Execute trading logic based on mode
+    if(g_auto_agent_enabled) {
+        ExecuteAutoAgentTrading();
+    } else {
+        ExecuteConsensusTrading();
+    }
+    
+    // Update backtest metrics
+    g_backtest_bars_processed++;
+    
+    // Print progress every 100 bars
+    if(current_bar % 100 == 0) {
+        Print("Backtest progress: ", current_bar, " bars processed, Current time: ", TimeToString(current_time));
+    }
 }
 
 //+------------------------------------------------------------------+
