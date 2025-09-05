@@ -466,6 +466,7 @@ struct BacktestTrade {
 
 BacktestTrade g_backtest_trades[10000];
 int g_backtest_trade_count = 0;
+int g_backtest_bars_processed = 0;
 
 // Signal verification tracking
 struct SignalVerification {
@@ -2041,7 +2042,10 @@ bool DetectAdvancedFairValueGap(FairValueGap &gap) {
         // Check for bullish FVG with statistical significance
         if(high_prev < low_next) {
             double gap_size = low_next - high_prev;
-            double atr_value = iATR(_Symbol, PERIOD_CURRENT, 14, i);
+            int atr_handle = iATR(_Symbol, PERIOD_CURRENT, 14);
+            double atr_buffer[1];
+            CopyBuffer(atr_handle, 0, i, 1, atr_buffer);
+            double atr_value = atr_buffer[0];
             
             // Statistical filter: gap must be significant relative to ATR
             if(gap_size > atr_value * 0.25) {
@@ -2058,7 +2062,10 @@ bool DetectAdvancedFairValueGap(FairValueGap &gap) {
         // Check for bearish FVG with statistical significance
         else if(low_prev > high_next) {
             double gap_size = low_prev - high_next;
-            double atr_value = iATR(_Symbol, PERIOD_CURRENT, 14, i);
+            int atr_handle = iATR(_Symbol, PERIOD_CURRENT, 14);
+            double atr_buffer[1];
+            CopyBuffer(atr_handle, 0, i, 1, atr_buffer);
+            double atr_value = atr_buffer[0];
             
             // Statistical filter: gap must be significant relative to ATR
             if(gap_size > atr_value * 0.25) {
@@ -2250,8 +2257,13 @@ double CalculateOrderFlowImbalance(datetime gap_time) {
 //+------------------------------------------------------------------+
 double AnalyzeMarketStateForFVG() {
     // Market state analysis for FVG effectiveness
-    double ema_20 = iMA(_Symbol, PERIOD_CURRENT, 20, 0, MODE_EMA, PRICE_CLOSE, 1);
-    double ema_50 = iMA(_Symbol, PERIOD_CURRENT, 50, 0, MODE_EMA, PRICE_CLOSE, 1);
+    int ema_20_handle = iMA(_Symbol, PERIOD_CURRENT, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int ema_50_handle = iMA(_Symbol, PERIOD_CURRENT, 50, 0, MODE_EMA, PRICE_CLOSE);
+    double ema_20_buffer[1], ema_50_buffer[1];
+    CopyBuffer(ema_20_handle, 0, 1, 1, ema_20_buffer);
+    CopyBuffer(ema_50_handle, 0, 1, 1, ema_50_buffer);
+    double ema_20 = ema_20_buffer[0];
+    double ema_50 = ema_50_buffer[0];
     double current_price = iClose(_Symbol, PERIOD_CURRENT, 1);
     
     // Trending market favors FVG strategies
@@ -2496,7 +2508,7 @@ double CalculateVPINScore(int start_bar, int lookback_period) {
         double close_price = iClose(_Symbol, _Period, i);
         long bar_volume = iVolume(_Symbol, _Period, i);
         
-        total_volume += bar_volume;
+        total_volume += (double)bar_volume;
         
         // Estimate buy/sell volume based on price movement
         if(close_price > open_price) {
@@ -2523,7 +2535,7 @@ double CalculateVolumeImbalanceRatio(int bar_index) {
     long prev_volume = iVolume(_Symbol, _Period, bar_index + 1);
     
     double price_change = iClose(_Symbol, _Period, bar_index) - iClose(_Symbol, _Period, bar_index + 1);
-    double volume_change = current_volume - prev_volume;
+    double volume_change = (double)(current_volume - prev_volume);
     
     // Volume-Price Trend (VPT) based imbalance
     double vpt_ratio = 0.5;
@@ -2587,9 +2599,16 @@ double AnalyzeH4TrendContext() {
     ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
     
     // Calculate trend strength using multiple indicators
-    double ema_20_h4 = iMA(_Symbol, h4_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE, 1);
-    double ema_50_h4 = iMA(_Symbol, h4_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE, 1);
-    double ema_200_h4 = iMA(_Symbol, h4_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE, 1);
+    int ema_20_h4_handle = iMA(_Symbol, h4_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int ema_50_h4_handle = iMA(_Symbol, h4_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
+    int ema_200_h4_handle = iMA(_Symbol, h4_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
+    double ema_20_h4_buffer[1], ema_50_h4_buffer[1], ema_200_h4_buffer[1];
+    CopyBuffer(ema_20_h4_handle, 0, 1, 1, ema_20_h4_buffer);
+    CopyBuffer(ema_50_h4_handle, 0, 1, 1, ema_50_h4_buffer);
+    CopyBuffer(ema_200_h4_handle, 0, 1, 1, ema_200_h4_buffer);
+    double ema_20_h4 = ema_20_h4_buffer[0];
+    double ema_50_h4 = ema_50_h4_buffer[0];
+    double ema_200_h4 = ema_200_h4_buffer[0];
     
     double current_price_h4 = iClose(_Symbol, h4_timeframe, 1);
     double prev_price_h4 = iClose(_Symbol, h4_timeframe, 2);
@@ -2598,8 +2617,11 @@ double AnalyzeH4TrendContext() {
     double trend_score = 0.0;
     
     // EMA alignment with slope analysis (35% weight)
-    double ema_slope_20 = (ema_20_h4 - iMA(_Symbol, h4_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE, 5)) / 4;
-    double ema_slope_50 = (ema_50_h4 - iMA(_Symbol, h4_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE, 5)) / 4;
+    double ema_20_h4_prev_buffer[1], ema_50_h4_prev_buffer[1];
+    CopyBuffer(ema_20_h4_handle, 0, 5, 1, ema_20_h4_prev_buffer);
+    CopyBuffer(ema_50_h4_handle, 0, 5, 1, ema_50_h4_prev_buffer);
+    double ema_slope_20 = (ema_20_h4 - ema_20_h4_prev_buffer[0]) / 4;
+    double ema_slope_50 = (ema_50_h4 - ema_50_h4_prev_buffer[0]) / 4;
     
     if(ema_20_h4 > ema_50_h4 && ema_50_h4 > ema_200_h4 && ema_slope_20 > 0 && ema_slope_50 > 0) {
         trend_score += 0.35; // Strong bullish alignment
@@ -2620,9 +2642,16 @@ double AnalyzeH4TrendContext() {
     }
     
     // Multi-indicator confirmation (20% weight)
-    double rsi_h4 = iRSI(_Symbol, h4_timeframe, 14, PRICE_CLOSE, 1);
-    double macd_main = iMACD(_Symbol, h4_timeframe, 12, 26, 9, PRICE_CLOSE, MODE_MAIN, 1);
-    double macd_signal = iMACD(_Symbol, h4_timeframe, 12, 26, 9, PRICE_CLOSE, MODE_SIGNAL, 1);
+    int rsi_handle = iRSI(_Symbol, h4_timeframe, 14, PRICE_CLOSE);
+    double rsi_buffer[1];
+    CopyBuffer(rsi_handle, 0, 1, 1, rsi_buffer);
+    double rsi_h4 = rsi_buffer[0];
+    int macd_handle = iMACD(_Symbol, h4_timeframe, 12, 26, 9, PRICE_CLOSE);
+    double macd_main_buffer[1], macd_signal_buffer[1];
+    CopyBuffer(macd_handle, 0, 1, 1, macd_main_buffer);    // Main line
+    CopyBuffer(macd_handle, 1, 1, 1, macd_signal_buffer);  // Signal line
+    double macd_main = macd_main_buffer[0];
+    double macd_signal = macd_signal_buffer[0];
     
     bool momentum_bullish = (rsi_h4 > 50 && macd_main > macd_signal && current_price_h4 > ema_20_h4);
     bool momentum_bearish = (rsi_h4 < 50 && macd_main < macd_signal && current_price_h4 < ema_20_h4);
@@ -2687,7 +2716,10 @@ double DetectH4FVGConfluence() {
         // Check for bullish FVG on 4H
         if(high_prev_h4 < low_next_h4) {
             double gap_size_h4 = low_next_h4 - high_prev_h4;
-            double atr_h4 = iATR(_Symbol, h4_timeframe, 14, 1);
+            int atr_h4_handle = iATR(_Symbol, h4_timeframe, 14);
+            double atr_h4_buffer[1];
+            CopyBuffer(atr_h4_handle, 0, 1, 1, atr_h4_buffer);
+            double atr_h4 = atr_h4_buffer[0];
             
             if(gap_size_h4 > atr_h4 * 0.3) { // Significant gap
                 confluence_score += 0.3;
@@ -2696,7 +2728,10 @@ double DetectH4FVGConfluence() {
         // Check for bearish FVG on 4H
         else if(low_prev_h4 > high_next_h4) {
             double gap_size_h4 = low_prev_h4 - high_next_h4;
-            double atr_h4 = iATR(_Symbol, h4_timeframe, 14, 1);
+            int atr_h4_handle = iATR(_Symbol, h4_timeframe, 14);
+            double atr_h4_buffer[1];
+            CopyBuffer(atr_h4_handle, 0, 1, 1, atr_h4_buffer);
+            double atr_h4 = atr_h4_buffer[0];
             
             if(gap_size_h4 > atr_h4 * 0.3) { // Significant gap
                 confluence_score += 0.3;
@@ -4142,13 +4177,33 @@ void InitializeBacktesting() {
     g_backtest_trade_count = 0;
     
     // Initialize backtest trades array
-    ArrayInitialize(g_backtest_trades, 0);
+    for(int i = 0; i < ArraySize(g_backtest_trades); i++) {
+        g_backtest_trades[i].entry_time = 0;
+        g_backtest_trades[i].entry_price = 0;
+        g_backtest_trades[i].exit_price = 0;
+        g_backtest_trades[i].profit_loss = 0;
+        g_backtest_trades[i].signal_type = SIGNAL_TYPE_HOLD;
+    }
     
     Print("Backtesting initialized with balance: $", DoubleToString(g_backtest_initial_balance, 2));
 }
 
 //+------------------------------------------------------------------+
-//| Record Backtest Trade                                           |
+//| Record Backtest Trade (Overloaded for signal execution)        |
+//+------------------------------------------------------------------+
+void RecordBacktestTrade(ENUM_SIGNAL_TYPE signal_type, double entry_price, double sl, double tp, 
+                        double lot_size, double confidence, string comment) {
+    // For now, record as an open trade - will be closed later
+    // This is a simplified version for immediate trade recording
+    datetime entry_time = TimeCurrent();
+    double exit_price = entry_price; // Will be updated when trade closes
+    double profit_loss = 0.0; // Will be calculated when trade closes
+    
+    RecordBacktestTrade(entry_time, entry_price, exit_price, profit_loss, confidence, comment, signal_type);
+}
+
+//+------------------------------------------------------------------+
+//| Record Backtest Trade (Full version)                           |
 //+------------------------------------------------------------------+
 void RecordBacktestTrade(datetime entry_time, double entry_price, double exit_price, 
                         double profit_loss, double confidence, string strategy, 
@@ -4158,18 +4213,18 @@ void RecordBacktestTrade(datetime entry_time, double entry_price, double exit_pr
         return;
     }
     
-    BacktestTrade trade;
-    trade.entry_time = entry_time;
-    trade.exit_time = TimeCurrent();
-    trade.entry_price = entry_price;
-    trade.exit_price = exit_price;
-    trade.profit_loss = profit_loss;
-    trade.confidence_score = confidence;
-    trade.strategy_name = strategy;
-    trade.signal_type = signal_type;
-    trade.is_winner = profit_loss > 0;
+    BacktestTrade bt_trade;
+    bt_trade.entry_time = entry_time;
+    bt_trade.exit_time = TimeCurrent();
+    bt_trade.entry_price = entry_price;
+    bt_trade.exit_price = exit_price;
+    bt_trade.profit_loss = profit_loss;
+    bt_trade.confidence_score = confidence;
+    bt_trade.strategy_name = strategy;
+    bt_trade.signal_type = signal_type;
+    bt_trade.is_winner = profit_loss > 0;
     
-    g_backtest_trades[g_backtest_trade_count] = trade;
+    g_backtest_trades[g_backtest_trade_count] = bt_trade;
     g_backtest_trade_count++;
     
     // Update backtest statistics
@@ -4223,17 +4278,18 @@ void ExportBacktestResults() {
         
         // Write individual trades
         for(int i = 0; i < g_backtest_trade_count; i++) {
-            BacktestTrade trade = g_backtest_trades[i];
+            BacktestTrade bt_trade;
+            bt_trade = g_backtest_trades[i];
             FileWrite(file_handle,
-                     TimeToString(trade.entry_time),
-                     TimeToString(trade.exit_time),
-                     trade.strategy_name,
-                     EnumToString(trade.signal_type),
-                     trade.entry_price,
-                     trade.exit_price,
-                     trade.profit_loss,
-                     trade.confidence_score,
-                     trade.is_winner ? "Yes" : "No");
+                     TimeToString(bt_trade.entry_time),
+                     TimeToString(bt_trade.exit_time),
+                     bt_trade.strategy_name,
+                     EnumToString(bt_trade.signal_type),
+                     bt_trade.entry_price,
+                     bt_trade.exit_price,
+                     bt_trade.profit_loss,
+                     bt_trade.confidence_score,
+                     bt_trade.is_winner ? "Yes" : "No");
         }
         
         FileClose(file_handle);
