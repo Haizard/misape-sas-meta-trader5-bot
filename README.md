@@ -18,3 +18,7 @@
    Pin Bar SL (tighter)
 8. 8.
    VWAP SL (dynamic)
+
+
+
+   now i want you to perform an advanced research on my bot. Fair Value Gap on how it worked in my bot and then go online in the google scholar to find strategics, logic, implementantion and advanced features in the Fair Value Gap at the sametime you must find advanced mathematical calculation used in the Fair Value Gap features also you must make the Fair Value Gap to perfom analysis in both 4hr chart to find good entry in small time frame
