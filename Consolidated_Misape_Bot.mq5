@@ -5264,7 +5264,8 @@ void CleanupOldPatterns() {
 void DrawHeadAndShouldersPattern(int pattern_index) {
     if(pattern_index < 0 || pattern_index >= g_detected_pattern_count) return;
 
-    DetectedPattern pattern = g_detected_patterns[pattern_index];
+    DetectedPattern pattern;
+    pattern = g_detected_patterns[pattern_index];
     color pattern_color = pattern.is_bullish ? clrBlue : clrRed;
 
     // Draw lines connecting the points
@@ -5308,7 +5309,8 @@ void DrawHeadAndShouldersPattern(int pattern_index) {
 void DrawFlagPattern(int pattern_index) {
     if(pattern_index < 0 || pattern_index >= g_detected_pattern_count) return;
 
-    DetectedPattern pattern = g_detected_patterns[pattern_index];
+    DetectedPattern pattern;
+    pattern = g_detected_patterns[pattern_index];
     color pattern_color = pattern.is_bullish ? clrBlue : clrRed;
 
     // Draw flagpole
@@ -5345,7 +5347,8 @@ void DrawFlagPattern(int pattern_index) {
 void DrawButterflyPattern(int pattern_index) {
     if(pattern_index < 0 || pattern_index >= g_detected_pattern_count) return;
 
-    DetectedPattern pattern = g_detected_patterns[pattern_index];
+    DetectedPattern pattern;
+    pattern = g_detected_patterns[pattern_index];
     color pattern_color = pattern.is_bullish ? clrBlue : clrRed;
 
     // Draw connecting lines
