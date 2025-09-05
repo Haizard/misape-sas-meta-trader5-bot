@@ -171,6 +171,14 @@ input group "=== Risk Management ==="
 input double ATR_Multiplier_SL = 2.0;      // ATR multiplier for stop loss
 input double ATR_Multiplier_TP = 3.0;      // ATR multiplier for take profit
 
+input group "=== Trailing Stop Settings ==="
+input bool EnableTrailingStop = true;     // Enable trailing stop mechanism
+input double TrailingStop_ATR_Multiplier = 1.5; // ATR multiplier for trailing stop (scalping optimized)
+input double ProfitActivationPoints = 10.0; // Minimum profit in points to activate trailing stop
+input bool UseATRBasedActivation = true;   // Use ATR-based profit activation instead of fixed points
+input double ATR_Multiplier_Activation = 1.0; // ATR multiplier for profit activation threshold
+input int TrailingStepPoints = 5;          // Minimum step size for trailing stop adjustment
+
 input group "=== Dashboard Settings ==="
 input bool EnableDashboard = true;         // Enable/disable the visual dashboard
 
@@ -384,6 +392,19 @@ int g_current_verification_count = 2;      // Current signal verification count 
 datetime g_last_auto_trade_time = 0;       // Last automatic trade execution time
 bool g_auto_agent_button_state = false;    // Auto Agent button visual state
 
+// Trailing Stop variables
+struct TrailingStopData {
+    ulong ticket;                           // Position ticket
+    double highest_profit;                  // Highest profit achieved
+    double trailing_stop_level;            // Current trailing stop level
+    bool is_active;                         // Is trailing stop active
+    datetime activation_time;               // When trailing stop was activated
+    double initial_stop_loss;              // Original stop loss
+};
+
+TrailingStopData g_trailing_stops[];       // Array to track trailing stops for all positions
+int g_trailing_count = 0;                  // Number of positions with trailing stops
+
 // Performance tracking
 struct StrategyPerformance {
     int total_signals;
@@ -530,6 +551,11 @@ void OnTick() {
     // Update dashboard
     if(EnableDashboard) {
         UpdateDashboard();
+    }
+
+    // Manage trailing stops for all open positions
+    if(EnableTrailingStop && EnableTrading) {
+        ManageTrailingStops();
     }
 
     // Execute trading logic based on mode
@@ -897,6 +923,10 @@ void ExecuteTrade(ENUM_SIGNAL_TYPE signal_type, double confidence, double sl, do
         result = trade.Buy(lot_size, _Symbol, ask, sl, tp, comment);
         if(result) {
             Print("BUY order executed: Lot=", lot_size, " Price=", ask, " SL=", sl, " TP=", tp, " Confidence=", confidence);
+            // Initialize trailing stop for the new position
+            if(EnableTrailingStop) {
+                InitializeTrailingStop(trade.ResultOrder(), sl);
+            }
         }
     }
     else if(signal_type == SIGNAL_TYPE_SELL) {
@@ -907,6 +937,10 @@ void ExecuteTrade(ENUM_SIGNAL_TYPE signal_type, double confidence, double sl, do
         result = trade.Sell(lot_size, _Symbol, bid, sl, tp, comment);
         if(result) {
             Print("SELL order executed: Lot=", lot_size, " Price=", bid, " SL=", sl, " TP=", tp, " Confidence=", confidence);
+            // Initialize trailing stop for the new position
+            if(EnableTrailingStop) {
+                InitializeTrailingStop(trade.ResultOrder(), sl);
+            }
         }
     }
 
@@ -3661,6 +3695,10 @@ void CreateConsensusRiskSection() {
                        "Conf:", "Arial", 8, COLOR_TEXT_SECONDARY);
     CreateAdvancedLabel(DASHBOARD_PREFIX + "ConfidenceValue", g_dashboard_x + 150, y_start + 28,
                        "0%", "Arial Bold", 8, COLOR_TEXT_SECONDARY);
+    
+    // Trailing Stop status - third column
+    CreateAdvancedLabel(DASHBOARD_PREFIX + "TrailingStatus", g_dashboard_x + 190, y_start + 28,
+                       "TS: OFF", "Arial Bold", 8, COLOR_TOGGLE_OFF);
 }
 
 //+------------------------------------------------------------------+
@@ -4046,6 +4084,30 @@ void UpdateConsensusRiskInfo() {
     string conf_text = IntegerToString((int)avg_confidence) + "%";
     color conf_color = avg_confidence >= (MinConfidenceThreshold * 100) ? COLOR_CONSENSUS_HIGH : COLOR_CONSENSUS_LOW;
     UpdateAdvancedLabel(DASHBOARD_PREFIX + "ConfidenceValue", conf_text, conf_color);
+    
+    // Update trailing stop status
+    string trailing_status = "TS: ";
+    color trailing_color = COLOR_TEXT_PRIMARY;
+    
+    if(!EnableTrailingStop) {
+        trailing_status += "OFF";
+        trailing_color = COLOR_TOGGLE_OFF;
+    } else {
+        int active_count = 0;
+        for(int j = 0; j < g_trailing_count; j++) {
+            if(g_trailing_stops[j].ticket > 0) active_count++;
+        }
+        
+        if(active_count > 0) {
+            trailing_status += "ACTIVE(" + IntegerToString(active_count) + ")";
+            trailing_color = COLOR_TOGGLE_ON;
+        } else {
+            trailing_status += "READY";
+            trailing_color = COLOR_TEXT_ACCENT;
+        }
+    }
+    
+    UpdateAdvancedLabel(DASHBOARD_PREFIX + "TrailingStatus", trailing_status, trailing_color);
 }
 
 //+------------------------------------------------------------------+
@@ -6345,6 +6407,179 @@ void CleanupExpiredDrawings() {
 }
 
 //+------------------------------------------------------------------+
+//| Trailing Stop Management Functions                              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Initialize trailing stop for a new position                     |
+//+------------------------------------------------------------------+
+void InitializeTrailingStop(ulong ticket, double initial_sl) {
+    // Find the position by ticket
+    if(!PositionSelectByTicket(ticket)) {
+        Print("Failed to select position by ticket: ", ticket);
+        return;
+    }
+    
+    // Add to trailing stops array
+    ArrayResize(g_trailing_stops, g_trailing_count + 1);
+    
+    g_trailing_stops[g_trailing_count].ticket = ticket;
+    g_trailing_stops[g_trailing_count].highest_profit = 0.0;
+    g_trailing_stops[g_trailing_count].trailing_stop_level = initial_sl;
+    g_trailing_stops[g_trailing_count].is_active = false;
+    g_trailing_stops[g_trailing_count].activation_time = 0;
+    g_trailing_stops[g_trailing_count].initial_stop_loss = initial_sl;
+    
+    g_trailing_count++;
+    
+    if(EnableDebugLogging) {
+        Print("Trailing stop initialized for ticket: ", ticket, " Initial SL: ", initial_sl);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Main trailing stop management function                          |
+//+------------------------------------------------------------------+
+void ManageTrailingStops() {
+    for(int i = g_trailing_count - 1; i >= 0; i--) {
+        if(!PositionSelectByTicket(g_trailing_stops[i].ticket)) {
+            // Position closed, remove from array
+            RemoveTrailingStop(i);
+            continue;
+        }
+        
+        double current_profit = PositionGetDouble(POSITION_PROFIT);
+        double position_type = PositionGetInteger(POSITION_TYPE);
+        double open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+        double current_price = (position_type == POSITION_TYPE_BUY) ? 
+                              SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                              SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        
+        // Calculate profit activation threshold
+        double activation_threshold = UseATRBasedActivation ? 
+                                    (g_atr_value * ATR_Multiplier_Activation * _Point) : 
+                                    (ProfitActivationPoints * _Point);
+        
+        // Check if trailing stop should be activated
+        if(!g_trailing_stops[i].is_active && current_profit > activation_threshold) {
+            g_trailing_stops[i].is_active = true;
+            g_trailing_stops[i].activation_time = TimeCurrent();
+            g_trailing_stops[i].highest_profit = current_profit;
+            
+            if(EnableDebugLogging) {
+                Print("Trailing stop activated for ticket: ", g_trailing_stops[i].ticket, 
+                      " Profit: ", current_profit, " Threshold: ", activation_threshold);
+            }
+        }
+        
+        // Manage active trailing stops
+        if(g_trailing_stops[i].is_active) {
+            UpdateTrailingStop(i, current_profit, position_type, current_price, open_price);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Update trailing stop for a specific position                    |
+//+------------------------------------------------------------------+
+void UpdateTrailingStop(int index, double current_profit, double position_type, 
+                       double current_price, double open_price) {
+    
+    // Update highest profit achieved
+    if(current_profit > g_trailing_stops[index].highest_profit) {
+        g_trailing_stops[index].highest_profit = current_profit;
+    }
+    
+    // Calculate new trailing stop level using ATR-based chandelier exit method
+    double atr_distance = g_atr_value * TrailingStop_ATR_Multiplier;
+    double new_trailing_level;
+    
+    if(position_type == POSITION_TYPE_BUY) {
+        // For BUY positions: trailing stop = current_price - ATR_distance
+        new_trailing_level = current_price - atr_distance;
+        
+        // Only move stop loss up (never down)
+        if(new_trailing_level > g_trailing_stops[index].trailing_stop_level) {
+            // Check minimum step requirement
+            double step_distance = new_trailing_level - g_trailing_stops[index].trailing_stop_level;
+            if(step_distance >= TrailingStepPoints * _Point) {
+                g_trailing_stops[index].trailing_stop_level = new_trailing_level;
+                ModifyPositionStopLoss(g_trailing_stops[index].ticket, new_trailing_level);
+            }
+        }
+    }
+    else if(position_type == POSITION_TYPE_SELL) {
+        // For SELL positions: trailing stop = current_price + ATR_distance
+        new_trailing_level = current_price + atr_distance;
+        
+        // Only move stop loss down (never up)
+        if(new_trailing_level < g_trailing_stops[index].trailing_stop_level) {
+            // Check minimum step requirement
+            double step_distance = g_trailing_stops[index].trailing_stop_level - new_trailing_level;
+            if(step_distance >= TrailingStepPoints * _Point) {
+                g_trailing_stops[index].trailing_stop_level = new_trailing_level;
+                ModifyPositionStopLoss(g_trailing_stops[index].ticket, new_trailing_level);
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Modify position stop loss                                       |
+//+------------------------------------------------------------------+
+void ModifyPositionStopLoss(ulong ticket, double new_sl) {
+    if(!PositionSelectByTicket(ticket)) {
+        Print("Failed to select position for modification: ", ticket);
+        return;
+    }
+    
+    double current_tp = PositionGetDouble(POSITION_TP);
+    
+    if(trade.PositionModify(ticket, new_sl, current_tp)) {
+        if(EnableDebugLogging) {
+            Print("Trailing stop updated for ticket: ", ticket, " New SL: ", new_sl);
+        }
+    }
+    else {
+        Print("Failed to modify trailing stop for ticket: ", ticket, 
+              " Error: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Remove trailing stop from array                                 |
+//+------------------------------------------------------------------+
+void RemoveTrailingStop(int index) {
+    if(index < 0 || index >= g_trailing_count) return;
+    
+    // Shift array elements
+    for(int i = index; i < g_trailing_count - 1; i++) {
+        g_trailing_stops[i] = g_trailing_stops[i + 1];
+    }
+    
+    g_trailing_count--;
+    ArrayResize(g_trailing_stops, g_trailing_count);
+    
+    if(EnableDebugLogging) {
+        Print("Trailing stop removed from index: ", index);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get trailing stop status for dashboard display                  |
+//+------------------------------------------------------------------+
+string GetTrailingStopStatus() {
+    if(!EnableTrailingStop) return "Disabled";
+    
+    int active_count = 0;
+    for(int i = 0; i < g_trailing_count; i++) {
+        if(g_trailing_stops[i].is_active) active_count++;
+    }
+    
+    return StringFormat("Active: %d/%d", active_count, g_trailing_count);
+}
+
+//+------------------------------------------------------------------+
 //| END OF CONSOLIDATED MISAPE BOT IMPLEMENTATION                   |
 //| Integration completed: 8-strategy consensus system              |
 //| Strategies: Order Block, Fair Value Gap, Market Structure,      |
@@ -6354,6 +6589,8 @@ void CleanupExpiredDrawings() {
 //|          Pin Bar: 58-65% accuracy, 2-3x wick-to-body ratio     |
 //|          VWAP: Institutional-grade calculation, 671% returns    |
 //|          Consensus-based decision making with confidence scoring|
+//|          Trailing Stop: ATR-based scalping system with profit   |
+//|          activation and chandelier exit methodology             |
 //|          Complete visual representation for all patterns        |
 //|          Automatic cleanup of expired chart drawings            |
 //| Visual Elements: Order Blocks, Fair Value Gaps, Market Structure|
