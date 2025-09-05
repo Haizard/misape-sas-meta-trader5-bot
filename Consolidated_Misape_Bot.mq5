@@ -3480,7 +3480,7 @@ void CreateStrategyGrid() {
     ObjectSetInteger(0, DASHBOARD_PREFIX + "StrategyGridBorder", OBJPROP_BACK, false);
 
     // Calculate improved button dimensions with better spacing
-    int available_width = grid_width - 30; // More margin for better appearance
+    available_width = grid_width - 30; // More margin for better appearance
     int button_width_new = (available_width - (3 * 8)) / 4; // 4 columns with 8px gaps
     int button_height_new = (available_height - (1 * 8)) / 2; // 2 rows with 8px gap
 
