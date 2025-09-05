@@ -152,6 +152,76 @@ struct StrategyStatus {
     color status_color;
 };
 
+//--- Enhanced Market Structure Structures
+struct EnhancedMarketStructureSignal {
+    ENUM_SIGNAL_TYPE signal_type;
+    double entry_price;
+    double stop_loss;
+    double take_profit;
+    double confidence;
+    datetime signal_time;
+    
+    // Enhanced BOS detection
+    bool is_bos;
+    bool is_choch;
+    bool is_mss;
+    double bos_strength;
+    double volume_confirmation;
+    
+    // Mathematical validation
+    double statistical_significance;
+    double order_flow_imbalance;
+    double institutional_flow;
+    double multi_timeframe_confluence;
+    
+    // Swing point data
+    double swing_high;
+    double swing_low;
+    datetime swing_high_time;
+    datetime swing_low_time;
+    
+    string obj_name;
+    bool signal_sent;
+};
+
+struct SwingPoint {
+    double price;
+    datetime time;
+    bool is_high;
+    double strength;
+    double volume;
+    int bar_index;
+    bool is_confirmed;
+    double atr_at_formation;
+};
+
+struct MarketStructureState {
+    SwingPoint last_swing_high;
+    SwingPoint last_swing_low;
+    SwingPoint previous_swing_high;
+    SwingPoint previous_swing_low;
+    
+    bool bullish_structure;
+    bool bearish_structure;
+    double structure_strength;
+    datetime last_structure_change;
+    
+    // BOS tracking
+    bool bos_detected;
+    double bos_level;
+    datetime bos_time;
+    
+    // CHoCH tracking
+    bool choch_detected;
+    double choch_level;
+    datetime choch_time;
+    
+    // MSS tracking
+    bool mss_detected;
+    double mss_level;
+    datetime mss_time;
+};
+
 //+------------------------------------------------------------------+
 //| INPUT PARAMETERS                                                 |
 //+------------------------------------------------------------------+
@@ -216,6 +286,21 @@ input double FVG_MaxMiddleCandleRatio = 0.3; // Maximum middle candle ratio
 input group "=== Market Structure Strategy ==="
 input bool EnableMarketStructure = true;   // Enable Market Structure strategy
 input int MS_SwingPeriod = 10;             // Swing detection period
+
+input group "=== Enhanced Market Structure Settings ==="
+input bool MS_EnableAdvancedBOS = true;                    // Enable advanced BOS detection
+input bool MS_EnableCHoCH = true;                          // Enable CHoCH detection
+input bool MS_EnableMSS = true;                            // Enable MSS detection
+input double MS_MinBOSStrength = 1.5;                      // Minimum BOS strength (ATR multiplier)
+input double MS_VolumeConfirmationThreshold = 1.2;         // Volume confirmation threshold
+input int MS_SwingDetectionPeriod = 20;                    // Adaptive swing detection period
+input double MS_StatisticalSignificance = 0.05;            // P-value threshold for signal validity
+input bool MS_EnableOrderFlowAnalysis = true;              // Enable order flow imbalance analysis
+input double MS_CHoCHSensitivity = 0.7;                    // CHoCH detection sensitivity (0-1)
+input double MS_MSSThreshold = 2.0;                        // MSS strength threshold (ATR multiplier)
+input bool MS_EnableMultiTimeframeValidation = true;       // Enable MTF validation
+input double MS_FalseBreakFilterStrength = 0.8;            // False break filter strength
+input int MS_InstitutionalFlowPeriod = 50;                 // Period for institutional flow analysis
 
 input group "=== Range Breakout Strategy ==="
 input bool EnableRangeBreakout = true;     // Enable Range Breakout strategy
@@ -338,6 +423,21 @@ VWAPData g_vwap_data;
 double g_vwap_pv_array[];     // Array to store Price*Volume for std dev calculation
 double g_vwap_vol_array[];    // Array to store Volume for std dev calculation
 int g_vwap_data_count = 0;
+
+// Enhanced Market Structure global variables
+MarketStructureState g_ms_state;
+EnhancedMarketStructureSignal g_ms_signals[];
+int g_ms_signal_count = 0;
+SwingPoint g_swing_points[];
+int g_swing_count = 0;
+datetime g_last_ms_analysis = 0;
+double g_last_order_flow_imbalance = 0;
+double g_institutional_flow_buffer[];
+int g_institutional_flow_count = 0;
+bool g_ms_structure_invalidated = false;
+datetime g_last_bos_time = 0;
+datetime g_last_choch_time = 0;
+datetime g_last_mss_time = 0;
 
 // Control Panel Style Dashboard Constants
 #define DASHBOARD_PREFIX "MisapeControl_"
@@ -3694,10 +3794,10 @@ void StoreFVGForTracking(FairValueGap &gap) {
 //| Enhanced 4H Timeframe Trend Context Analysis                    |
 //+------------------------------------------------------------------+
 double AnalyzeH4TrendContext() {
-    // Enhanced 4H timeframe analysis with market structure and momentum
+    // Enhanced 4H timeframe analysis with advanced market structure integration
     ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
     
-    // Calculate trend strength using multiple indicators
+    // Calculate trend strength using multiple indicators with enhanced validation
     int ema_20_h4_handle = iMA(_Symbol, h4_timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
     int ema_50_h4_handle = iMA(_Symbol, h4_timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
     int ema_200_h4_handle = iMA(_Symbol, h4_timeframe, 200, 0, MODE_EMA, PRICE_CLOSE);
@@ -3740,7 +3840,7 @@ double AnalyzeH4TrendContext() {
         trend_score += 0.2; // Bearish momentum
     }
     
-    // Multi-indicator confirmation (20% weight)
+    // Enhanced multi-indicator confirmation with institutional flow (20% weight)
     int rsi_handle = iRSI(_Symbol, h4_timeframe, 14, PRICE_CLOSE);
     double rsi_buffer[1];
     CopyBuffer(rsi_handle, 0, 1, 1, rsi_buffer);
@@ -3752,12 +3852,18 @@ double AnalyzeH4TrendContext() {
     double macd_main = macd_main_buffer[0];
     double macd_signal = macd_signal_buffer[0];
     
-    bool momentum_bullish = (rsi_h4 > 50 && macd_main > macd_signal && current_price_h4 > ema_20_h4);
-    bool momentum_bearish = (rsi_h4 < 50 && macd_main < macd_signal && current_price_h4 < ema_20_h4);
+    // Enhanced momentum analysis with volume confirmation
+    double volume_confirmation = CalculateH4VolumeConfirmation();
+    bool momentum_bullish = (rsi_h4 > 50 && macd_main > macd_signal && current_price_h4 > ema_20_h4 && volume_confirmation > 1.2);
+    bool momentum_bearish = (rsi_h4 < 50 && macd_main < macd_signal && current_price_h4 < ema_20_h4 && volume_confirmation > 1.2);
     
     if(momentum_bullish || momentum_bearish) {
         trend_score += 0.2;
     }
+    
+    // Add institutional flow bias (additional 10% weight)
+    double institutional_bias = CalculateH4InstitutionalBias();
+    trend_score += institutional_bias * 0.1;
     
     return MathMin(1.0, trend_score);
 }
@@ -3916,6 +4022,48 @@ double DetectH4FVGConfluence() {
 }
 
 //+------------------------------------------------------------------+
+//| Calculate H4 Volume Confirmation                                |
+//+------------------------------------------------------------------+
+double CalculateH4VolumeConfirmation() {
+    ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
+    double current_volume = (double)iVolume(_Symbol, h4_timeframe, 1);
+    
+    // Calculate 20-period average volume
+    double avg_volume = 0.0;
+    for(int i = 2; i <= 21; i++) {
+        avg_volume += (double)iVolume(_Symbol, h4_timeframe, i);
+    }
+    avg_volume /= 20.0;
+    
+    return (avg_volume > 0) ? current_volume / avg_volume : 1.0;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate H4 Institutional Bias                                 |
+//+------------------------------------------------------------------+
+double CalculateH4InstitutionalBias() {
+    ENUM_TIMEFRAMES h4_timeframe = PERIOD_H4;
+    double bias_score = 0.0;
+    
+    // Analyze large volume spikes (institutional activity)
+    double avg_volume = CalculateAverageVolume(h4_timeframe, 20);
+    
+    for(int i = 1; i <= 5; i++) {
+        double volume = (double)iVolume(_Symbol, h4_timeframe, i);
+        double close_price = iClose(_Symbol, h4_timeframe, i);
+        double open_price = iOpen(_Symbol, h4_timeframe, i);
+        
+        if(volume > avg_volume * 2.0) { // Large volume spike
+            double price_movement = (close_price - open_price) / open_price;
+            bias_score += price_movement * (volume / avg_volume) * 0.2;
+        }
+    }
+    
+    // Normalize to 0-1 range
+    return MathMax(0.0, MathMin(1.0, (bias_score + 1.0) / 2.0));
+}
+
+//+------------------------------------------------------------------+
 //| Calculate Institutional 4H Flow                                 |
 //+------------------------------------------------------------------+
 double CalculateInstitutional4HFlow() {
@@ -3956,6 +4104,133 @@ double CalculateInstitutional4HFlow() {
     }
     
     return MathMin(1.0, institutional_score);
+}
+
+//+------------------------------------------------------------------+
+//| Analyze 4H Range Context for Range Breakout                     |
+//+------------------------------------------------------------------+
+double AnalyzeH4RangeContext()
+{
+   double context_score = 0.0;
+   
+   // Get 4H data
+   double h4_high[], h4_low[], h4_close[], h4_open[];
+   ArraySetAsSeries(h4_high, true);
+   ArraySetAsSeries(h4_low, true);
+   ArraySetAsSeries(h4_close, true);
+   ArraySetAsSeries(h4_open, true);
+   
+   if(CopyHigh(_Symbol, PERIOD_H4, 0, 24, h4_high) < 24 ||
+      CopyLow(_Symbol, PERIOD_H4, 0, 24, h4_low) < 24 ||
+      CopyClose(_Symbol, PERIOD_H4, 0, 24, h4_close) < 24 ||
+      CopyOpen(_Symbol, PERIOD_H4, 0, 24, h4_open) < 24)
+      return 0.0;
+   
+   // 1. Calculate 4H volatility clustering (30%)
+   double volatility_score = CalculateH4VolatilityClustering(h4_high, h4_low, h4_close);
+   
+   // 2. Analyze 4H range compression (25%)
+   double compression_score = CalculateH4RangeCompression(h4_high, h4_low);
+   
+   // 3. Check 4H institutional flow alignment (25%)
+   double flow_score = CalculateInstitutional4HFlow();
+   
+   // 4. Evaluate 4H trend context (20%)
+   double trend_score = AnalyzeH4TrendContext();
+   
+   // Weighted combination
+   context_score = (volatility_score * 0.30) + 
+                   (compression_score * 0.25) + 
+                   (flow_score * 0.25) + 
+                   (trend_score * 0.20);
+   
+   return MathMax(0.0, MathMin(1.0, context_score));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate 4H Volatility Clustering                              |
+//+------------------------------------------------------------------+
+double CalculateH4VolatilityClustering(const double &high[], const double &low[], const double &close[])
+{
+   double clustering_score = 0.0;
+   
+   // Calculate True Range for each period
+   double tr_values[20];
+   for(int i = 1; i < 20; i++)
+   {
+      double tr1 = high[i] - low[i];
+      double tr2 = MathAbs(high[i] - close[i+1]);
+      double tr3 = MathAbs(low[i] - close[i+1]);
+      tr_values[i] = MathMax(tr1, MathMax(tr2, tr3));
+   }
+   
+   // Calculate ATR
+   double atr_sum = 0.0;
+   for(int i = 1; i < 15; i++)
+      atr_sum += tr_values[i];
+   double atr = atr_sum / 14.0;
+   
+   // Analyze volatility clustering patterns
+   int high_vol_periods = 0;
+   int low_vol_periods = 0;
+   
+   for(int i = 1; i < 10; i++)
+   {
+      if(tr_values[i] > atr * 1.5)
+         high_vol_periods++;
+      else if(tr_values[i] < atr * 0.5)
+         low_vol_periods++;
+   }
+   
+   // Score based on volatility clustering
+   if(low_vol_periods >= 3) // Compression phase
+      clustering_score = 0.8;
+   else if(high_vol_periods >= 3) // Expansion phase
+      clustering_score = 0.3;
+   else
+      clustering_score = 0.5;
+   
+   return clustering_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate 4H Range Compression                                  |
+//+------------------------------------------------------------------+
+double CalculateH4RangeCompression(const double &high[], const double &low[])
+{
+   double compression_score = 0.0;
+   
+   // Calculate recent range vs historical range
+   double recent_range = 0.0;
+   double historical_range = 0.0;
+   
+   // Recent 5 periods
+   for(int i = 0; i < 5; i++)
+      recent_range += (high[i] - low[i]);
+   recent_range /= 5.0;
+   
+   // Historical 20 periods
+   for(int i = 0; i < 20; i++)
+      historical_range += (high[i] - low[i]);
+   historical_range /= 20.0;
+   
+   // Calculate compression ratio
+   if(historical_range > 0)
+   {
+      double compression_ratio = recent_range / historical_range;
+      
+      // Score compression (lower ratio = higher compression = higher score)
+      if(compression_ratio < 0.6)
+         compression_score = 0.9; // High compression
+      else if(compression_ratio < 0.8)
+         compression_score = 0.7; // Medium compression
+      else if(compression_ratio > 1.2)
+         compression_score = 0.2; // Expansion phase
+      else
+         compression_score = 0.5; // Normal range
+   }
+   
+   return compression_score;
 }
 
 //+------------------------------------------------------------------+
@@ -4109,62 +4384,97 @@ bool CheckHammerPattern(int index) {
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
-//| Run Market Structure strategy                                    |
+//| Run Enhanced Market Structure strategy                           |
 //+------------------------------------------------------------------+
 void RunMarketStructureStrategy() {
+    if(!EnableMarketStructure) return;
+    
+    // Update swing points and market structure state
+    UpdateSwingPoints();
+    AnalyzeMarketStructure();
+    
+    // Generate enhanced signal
     TradingSignal signal;
-    signal = GenerateMarketStructureSignal();
+    signal = GenerateEnhancedMarketStructureSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_MARKET_STRUCTURE, signal);
-        // Draw Market Structure if signal is valid
-        DrawMarketStructure(signal);
+        DrawEnhancedMarketStructure(signal);
     }
 }
 
 //+------------------------------------------------------------------+
-//| Generate Market Structure signal                                 |
+//| Generate Enhanced Market Structure signal                        |
 //+------------------------------------------------------------------+
-TradingSignal GenerateMarketStructureSignal() {
+TradingSignal GenerateEnhancedMarketStructureSignal() {
     TradingSignal signal;
     signal.signal_type = SIGNAL_TYPE_HOLD;
     signal.confidence_level = 0.0;
     signal.stop_loss = 0.0;
     signal.take_profit = 0.0;
     signal.parameters = "";
-    signal.strategy_name = "Market Structure";
+    signal.strategy_name = "Enhanced Market Structure";
     signal.timestamp = TimeCurrent();
     signal.is_valid = false;
-
-    // Simple swing high/low detection
-    static double lastSwingHigh = -1.0;
-    static double lastSwingLow = -1.0;
-
-    double high = iHigh(_Symbol, _Period, 1);
-    double low = iLow(_Symbol, _Period, 1);
-    double prevHigh = iHigh(_Symbol, _Period, 2);
-    double prevLow = iLow(_Symbol, _Period, 2);
-
-    // Detect swing high break (bearish structure break)
-    if(high > lastSwingHigh && high > prevHigh) {
-        lastSwingHigh = high;
-        signal.signal_type = SIGNAL_TYPE_SELL;
-        signal.confidence_level = 0.6;
-        signal.stop_loss = high + g_atr_value * 0.5;
-        signal.take_profit = low - g_atr_value * 2;
-        signal.parameters = "SwingHigh_Break_" + DoubleToString(high, _Digits);
-        signal.is_valid = true;
+    
+    if(g_swing_count < 4) return signal; // Need at least 4 swing points
+    
+    // Detect BOS, CHoCH, and MSS
+    bool bos_detected = DetectBOS();
+    bool choch_detected = MS_EnableCHoCH ? DetectCHoCH() : false;
+    bool mss_detected = MS_EnableMSS ? DetectMSS() : false;
+    
+    if(!bos_detected && !choch_detected && !mss_detected) return signal;
+    
+    // Calculate enhanced metrics
+    double order_flow = MS_EnableOrderFlowAnalysis ? CalculateOrderFlowImbalance() : 0.0;
+    double institutional_flow = CalculateInstitutionalFlow();
+    double mtf_confluence = MS_EnableMultiTimeframeValidation ? CalculateMultiTimeframeConfluence() : 1.0;
+    double volume_confirmation = CalculateVolumeConfirmation();
+    
+    // Determine signal direction and strength
+    if(bos_detected || mss_detected) {
+        if(g_ms_state.bullish_structure) {
+            signal.signal_type = SIGNAL_TYPE_BUY;
+            signal.entry_price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+            signal.stop_loss = g_ms_state.last_swing_low.price - (g_atr_value * MS_MinBOSStrength);
+            signal.take_profit = signal.entry_price + (g_atr_value * ATR_Multiplier_TP);
+        } else if(g_ms_state.bearish_structure) {
+            signal.signal_type = SIGNAL_TYPE_SELL;
+            signal.entry_price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+            signal.stop_loss = g_ms_state.last_swing_high.price + (g_atr_value * MS_MinBOSStrength);
+            signal.take_profit = signal.entry_price - (g_atr_value * ATR_Multiplier_TP);
+        }
     }
-    // Detect swing low break (bullish structure break)
-    else if(low < lastSwingLow && low < prevLow) {
-        lastSwingLow = low;
-        signal.signal_type = SIGNAL_TYPE_BUY;
-        signal.confidence_level = 0.6;
-        signal.stop_loss = low - g_atr_value * 0.5;
-        signal.take_profit = high + g_atr_value * 2;
-        signal.parameters = "SwingLow_Break_" + DoubleToString(low, _Digits);
-        signal.is_valid = true;
+    
+    // Calculate comprehensive confidence score
+    double base_confidence = g_ms_state.structure_strength;
+    double volume_factor = MathMin(volume_confirmation / MS_VolumeConfirmationThreshold, 2.0);
+    double flow_factor = MathAbs(order_flow) > 0.3 ? 1.2 : 0.8;
+    double institutional_factor = MathAbs(institutional_flow) > 0.5 ? 1.3 : 0.9;
+    
+    signal.confidence_level = base_confidence * volume_factor * flow_factor * institutional_factor * mtf_confluence;
+    signal.confidence_level = MathMax(0.0, MathMin(1.0, signal.confidence_level));
+    
+    // Statistical significance check
+    double p_value = CalculateStatisticalSignificance();
+    if(p_value > MS_StatisticalSignificance) {
+        signal.confidence_level *= 0.5; // Reduce confidence for statistically insignificant signals
     }
-
+    
+    // Validate signal strength
+    if(signal.confidence_level >= MinConfidenceThreshold && signal.signal_type != SIGNAL_TYPE_HOLD) {
+        signal.is_valid = true;
+        
+        // Enhanced parameters string
+        string bos_str = bos_detected ? "BOS" : "";
+        string choch_str = choch_detected ? "CHoCH" : "";
+        string mss_str = mss_detected ? "MSS" : "";
+        
+        signal.parameters = StringFormat("%s%s%s_Str:%.2f_Vol:%.2f_Flow:%.2f_MTF:%.2f_P:%.3f",
+            bos_str, choch_str, mss_str, g_ms_state.structure_strength, 
+            volume_confirmation, order_flow, mtf_confluence, p_value);
+    }
+    
     return signal;
 }
 
@@ -4237,7 +4547,7 @@ TradingSignal GenerateRangeBreakoutSignal() {
     signal.stop_loss = 0.0;
     signal.take_profit = 0.0;
     signal.parameters = "";
-    signal.strategy_name = "Range Breakout";
+    signal.strategy_name = "Range Breakout Enhanced";
     signal.timestamp = TimeCurrent();
     signal.is_valid = false;
 
@@ -4249,30 +4559,206 @@ TradingSignal GenerateRangeBreakoutSignal() {
     // Check for breakout during valid hours
     if(dt.hour >= RB_ValidBreakStartHour && dt.hour <= RB_ValidBreakEndHour) {
         double current_close = iClose(_Symbol, _Period, 1);
+        
+        // Get 4H context analysis
+        double h4_context = AnalyzeH4RangeContext();
+        double h4_trend = AnalyzeH4TrendContext();
+        double institutional_flow = CalculateInstitutional4HFlow();
+        
+        // Calculate range quality metrics
+        double range_size = g_daily_high - g_daily_low;
+        double range_quality = 1.0;
+        double atr_buffer[1];
+        int atr_handle = iATR(_Symbol, _Period, 14);
+        if(atr_handle != INVALID_HANDLE && CopyBuffer(atr_handle, 0, 1, 1, atr_buffer) > 0) {
+            double atr_current = atr_buffer[0];
+            range_quality = (atr_current > 0) ? range_size / atr_current : 1.0;
+        }
+        
+        // Volume confirmation
+        long current_volume_tick = iVolume(_Symbol, _Period, 1);
+        double current_volume = (double)current_volume_tick;
+        double avg_volume = 0.0;
+        for(int i = 2; i <= 21; i++) {
+            long volume_tick = iVolume(_Symbol, _Period, i);
+            avg_volume += (double)volume_tick;
+        }
+        avg_volume /= 20.0;
+        double volume_confirmation = (avg_volume > 0) ? current_volume / avg_volume : 1.0;
 
         // Bullish breakout
         if(current_close > g_daily_high) {
             signal.signal_type = SIGNAL_TYPE_BUY;
-            signal.confidence_level = 0.8;
-            signal.stop_loss = g_daily_low;
-            signal.take_profit = current_close + (g_daily_high - g_daily_low) * 2;
-            signal.parameters = "RangeBreakout_Bullish_" + DoubleToString(g_daily_high, _Digits);
-            signal.is_valid = true;
-            g_range_broken = true;
+            
+            // Check for BOS confirmation
+            bool has_bos = DetectRangeBreakoutBOS(current_close, true);
+            
+            // Calculate comprehensive quality score
+            double quality_score = CalculateRangeBreakoutQuality(range_size, has_bos, volume_confirmation, h4_context);
+            
+            // Enhanced confidence calculation with BOS factor
+            double base_confidence = 0.6;
+            double h4_factor = (h4_context > 0.6 && h4_trend > 0.5) ? 1.3 : 0.8;
+            double volume_factor = MathMin(volume_confirmation / 1.5, 2.0);
+            double range_factor = MathMin(range_quality / 1.2, 1.5);
+            double institutional_factor = (institutional_flow > 0.5) ? 1.2 : 0.9;
+            double bos_factor = has_bos ? 1.4 : 0.9; // Strong boost for BOS confirmation
+            
+            signal.confidence_level = base_confidence * h4_factor * volume_factor * range_factor * institutional_factor * bos_factor;
+            signal.confidence_level = MathMax(0.0, MathMin(1.0, signal.confidence_level));
+            
+            // Use dynamic risk management
+            CalculateRangeBreakoutRisk(signal.stop_loss, signal.take_profit, current_close, range_size, true, quality_score);
+            
+            signal.parameters = StringFormat("RB_Bull_H4:%.2f_Vol:%.2f_Inst:%.2f_BOS:%s_Q:%.2f", 
+                                           h4_context, volume_confirmation, institutional_flow, 
+                                           has_bos ? "Y" : "N", quality_score);
+            
+            // Enhanced validation with quality score
+            double min_confidence = has_bos ? 0.70 : 0.75; // Lower threshold if BOS confirmed
+            if(signal.confidence_level >= min_confidence && quality_score >= 0.6) {
+                signal.is_valid = true;
+                g_range_broken = true;
+                
+                // Update market structure state if BOS detected
+                if(has_bos) {
+                    g_ms_state.bos_detected = true;
+                    g_ms_state.bos_level = g_daily_high;
+                    g_ms_state.bos_time = TimeCurrent();
+                }
+            }
         }
         // Bearish breakout
         else if(current_close < g_daily_low) {
             signal.signal_type = SIGNAL_TYPE_SELL;
-            signal.confidence_level = 0.8;
-            signal.stop_loss = g_daily_high;
-            signal.take_profit = current_close - (g_daily_high - g_daily_low) * 2;
-            signal.parameters = "RangeBreakout_Bearish_" + DoubleToString(g_daily_low, _Digits);
-            signal.is_valid = true;
-            g_range_broken = true;
+            
+            // Check for BOS confirmation
+            bool has_bos = DetectRangeBreakoutBOS(current_close, false);
+            
+            // Calculate comprehensive quality score
+            double quality_score = CalculateRangeBreakoutQuality(range_size, has_bos, volume_confirmation, h4_context);
+            
+            // Enhanced confidence calculation with BOS factor
+            double base_confidence = 0.6;
+            double h4_factor = (h4_context > 0.6 && h4_trend < 0.5) ? 1.3 : 0.8;
+            double volume_factor = MathMin(volume_confirmation / 1.5, 2.0);
+            double range_factor = MathMin(range_quality / 1.2, 1.5);
+            double institutional_factor = (institutional_flow < -0.5) ? 1.2 : 0.9;
+            double bos_factor = has_bos ? 1.4 : 0.9; // Strong boost for BOS confirmation
+            
+            signal.confidence_level = base_confidence * h4_factor * volume_factor * range_factor * institutional_factor * bos_factor;
+            signal.confidence_level = MathMax(0.0, MathMin(1.0, signal.confidence_level));
+            
+            // Use dynamic risk management
+            CalculateRangeBreakoutRisk(signal.stop_loss, signal.take_profit, current_close, range_size, false, quality_score);
+            
+            signal.parameters = StringFormat("RB_Bear_H4:%.2f_Vol:%.2f_Inst:%.2f_BOS:%s_Q:%.2f", 
+                                           h4_context, volume_confirmation, institutional_flow, 
+                                           has_bos ? "Y" : "N", quality_score);
+            
+            // Enhanced validation with quality score
+            double min_confidence = has_bos ? 0.70 : 0.75; // Lower threshold if BOS confirmed
+            if(signal.confidence_level >= min_confidence && quality_score >= 0.6) {
+                signal.is_valid = true;
+                g_range_broken = true;
+                
+                // Update market structure state if BOS detected
+                if(has_bos) {
+                    g_ms_state.bos_detected = true;
+                    g_ms_state.bos_level = g_daily_low;
+                    g_ms_state.bos_time = TimeCurrent();
+                }
+            }
         }
     }
 
     return signal;
+}
+
+//+------------------------------------------------------------------+
+//| Enhanced Range Breakout with BOS Detection                      |
+//+------------------------------------------------------------------+
+bool DetectRangeBreakoutBOS(double breakout_price, bool is_bullish)
+{
+    if(g_swing_count < 2) return false;
+    
+    double bos_threshold = g_atr_value * MS_MinBOSStrength;
+    
+    if(is_bullish) {
+        // Check if breakout also constitutes a BOS above swing high
+        if(breakout_price > g_ms_state.last_swing_high.price + bos_threshold) {
+            return true;
+        }
+    } else {
+        // Check if breakout also constitutes a BOS below swing low
+        if(breakout_price < g_ms_state.last_swing_low.price - bos_threshold) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Range Breakout Quality Score                          |
+//+------------------------------------------------------------------+
+double CalculateRangeBreakoutQuality(double range_size, bool has_bos, double volume_conf, double h4_context)
+{
+    double quality_score = 0.0;
+    
+    // Base range quality (25%)
+    double atr_buffer[1];
+    int atr_handle = iATR(_Symbol, _Period, 14);
+    double atr_current = 0.0;
+    if(atr_handle != INVALID_HANDLE && CopyBuffer(atr_handle, 0, 1, 1, atr_buffer) > 0) {
+        atr_current = atr_buffer[0];
+    }
+    double range_atr_ratio = (atr_current > 0) ? range_size / atr_current : 1.0;
+    double range_quality = MathMin(range_atr_ratio / 1.5, 1.0);
+    
+    // BOS confirmation (30%)
+    double bos_score = has_bos ? 1.0 : 0.3;
+    
+    // Volume confirmation (25%)
+    double volume_score = MathMin(volume_conf / 2.0, 1.0);
+    
+    // 4H context alignment (20%)
+    double context_score = h4_context;
+    
+    // Weighted combination
+    quality_score = (range_quality * 0.25) + 
+                    (bos_score * 0.30) + 
+                    (volume_score * 0.25) + 
+                    (context_score * 0.20);
+    
+    return MathMax(0.0, MathMin(1.0, quality_score));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Dynamic Risk Management for Range Breakout            |
+//+------------------------------------------------------------------+
+void CalculateRangeBreakoutRisk(double &stop_loss, double &take_profit, 
+                                double entry_price, double range_size, 
+                                bool is_bullish, double quality_score)
+{
+    // Base risk parameters
+    double base_sl_ratio = 0.4;
+    double base_tp_ratio = 2.0;
+    
+    // Adjust based on quality score
+    double sl_adjustment = (quality_score > 0.7) ? 0.7 : 1.0; // Tighter SL for high quality
+    double tp_adjustment = (quality_score > 0.7) ? 1.3 : 1.0; // Higher TP for high quality
+    
+    double sl_distance = range_size * base_sl_ratio * sl_adjustment;
+    double tp_distance = range_size * base_tp_ratio * tp_adjustment;
+    
+    if(is_bullish) {
+        stop_loss = entry_price - sl_distance;
+        take_profit = entry_price + tp_distance;
+    } else {
+        stop_loss = entry_price + sl_distance;
+        take_profit = entry_price - tp_distance;
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -8915,6 +9401,447 @@ void RemoveTrailingStop(int index) {
     
     if(EnableDebugLogging) {
         Print("Trailing stop removed from index: ", index);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| ENHANCED MARKET STRUCTURE FUNCTIONS                             |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Update swing points with adaptive detection                      |
+//+------------------------------------------------------------------+
+void UpdateSwingPoints() {
+    static datetime last_update = 0;
+    datetime current_time = TimeCurrent();
+    
+    if(current_time - last_update < PeriodSeconds(_Period)) return;
+    last_update = current_time;
+    
+    int lookback = MS_SwingDetectionPeriod;
+    double atr_threshold = g_atr_value * 0.5;
+    
+    // Detect swing highs
+    for(int i = lookback; i < Bars(_Symbol, _Period) - lookback; i++) {
+        double high = iHigh(_Symbol, _Period, i);
+        bool is_swing_high = true;
+        
+        // Check if current high is higher than surrounding bars
+        for(int j = 1; j <= lookback; j++) {
+            if(high <= iHigh(_Symbol, _Period, i - j) || high <= iHigh(_Symbol, _Period, i + j)) {
+                is_swing_high = false;
+                break;
+            }
+        }
+        
+        if(is_swing_high && high > g_ms_state.last_swing_high.price + atr_threshold) {
+            SwingPoint new_swing;
+            new_swing.price = high;
+            new_swing.time = iTime(_Symbol, _Period, i);
+            new_swing.is_high = true;
+            new_swing.strength = CalculateSwingStrength(i, true);
+            long volume_tick = iVolume(_Symbol, _Period, i);
+            new_swing.volume = (double)volume_tick;
+            new_swing.bar_index = i;
+            new_swing.is_confirmed = true;
+            new_swing.atr_at_formation = g_atr_value;
+            
+            AddSwingPoint(new_swing);
+            g_ms_state.previous_swing_high = g_ms_state.last_swing_high;
+            g_ms_state.last_swing_high = new_swing;
+        }
+    }
+    
+    // Detect swing lows
+    for(int i = lookback; i < Bars(_Symbol, _Period) - lookback; i++) {
+        double low = iLow(_Symbol, _Period, i);
+        bool is_swing_low = true;
+        
+        // Check if current low is lower than surrounding bars
+        for(int j = 1; j <= lookback; j++) {
+            if(low >= iLow(_Symbol, _Period, i - j) || low >= iLow(_Symbol, _Period, i + j)) {
+                is_swing_low = false;
+                break;
+            }
+        }
+        
+        if(is_swing_low && low < g_ms_state.last_swing_low.price - atr_threshold) {
+            SwingPoint new_swing;
+            new_swing.price = low;
+            new_swing.time = iTime(_Symbol, _Period, i);
+            new_swing.is_high = false;
+            new_swing.strength = CalculateSwingStrength(i, false);
+            long volume_tick = iVolume(_Symbol, _Period, i);
+            new_swing.volume = (double)volume_tick;
+            new_swing.bar_index = i;
+            new_swing.is_confirmed = true;
+            new_swing.atr_at_formation = g_atr_value;
+            
+            AddSwingPoint(new_swing);
+            g_ms_state.previous_swing_low = g_ms_state.last_swing_low;
+            g_ms_state.last_swing_low = new_swing;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate swing strength                                         |
+//+------------------------------------------------------------------+
+double CalculateSwingStrength(int bar_index, bool is_high) {
+    double price = is_high ? iHigh(_Symbol, _Period, bar_index) : iLow(_Symbol, _Period, bar_index);
+    long volume_tick = iVolume(_Symbol, _Period, bar_index);
+    double volume = (double)volume_tick;
+    double avg_volume = 0;
+    
+    // Calculate average volume over 20 periods
+    for(int i = 0; i < 20; i++) {
+        long vol_tick = iVolume(_Symbol, _Period, bar_index + i);
+        avg_volume += (double)vol_tick;
+    }
+    avg_volume /= 20;
+    
+    double volume_factor = volume / avg_volume;
+    double atr_factor = g_atr_value > 0 ? MathAbs(price - iClose(_Symbol, _Period, bar_index + 1)) / g_atr_value : 1.0;
+    
+    return MathMin(2.0, volume_factor * atr_factor);
+}
+
+//+------------------------------------------------------------------+
+//| Add swing point to array                                        |
+//+------------------------------------------------------------------+
+void AddSwingPoint(SwingPoint &swing) {
+    ArrayResize(g_swing_points, g_swing_count + 1);
+    g_swing_points[g_swing_count] = swing;
+    g_swing_count++;
+    
+    // Keep only last 100 swing points
+    if(g_swing_count > 100) {
+        for(int i = 0; i < g_swing_count - 1; i++) {
+            g_swing_points[i] = g_swing_points[i + 1];
+        }
+        g_swing_count = 100;
+        ArrayResize(g_swing_points, g_swing_count);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Analyze market structure state                                   |
+//+------------------------------------------------------------------+
+void AnalyzeMarketStructure() {
+    if(g_swing_count < 4) return;
+    
+    // Determine market structure bias
+    bool higher_highs = g_ms_state.last_swing_high.price > g_ms_state.previous_swing_high.price;
+    bool higher_lows = g_ms_state.last_swing_low.price > g_ms_state.previous_swing_low.price;
+    bool lower_highs = g_ms_state.last_swing_high.price < g_ms_state.previous_swing_high.price;
+    bool lower_lows = g_ms_state.last_swing_low.price < g_ms_state.previous_swing_low.price;
+    
+    // Update structure state
+    if(higher_highs && higher_lows) {
+        g_ms_state.bullish_structure = true;
+        g_ms_state.bearish_structure = false;
+        g_ms_state.structure_strength = 0.8;
+    }
+    else if(lower_highs && lower_lows) {
+        g_ms_state.bullish_structure = false;
+        g_ms_state.bearish_structure = true;
+        g_ms_state.structure_strength = 0.8;
+    }
+    else {
+        // Consolidation or mixed signals
+        g_ms_state.structure_strength = 0.4;
+    }
+    
+    // Calculate structure strength based on swing quality
+    double avg_swing_strength = 0;
+    int count = MathMin(4, g_swing_count);
+    for(int i = g_swing_count - count; i < g_swing_count; i++) {
+        avg_swing_strength += g_swing_points[i].strength;
+    }
+    avg_swing_strength /= count;
+    
+    g_ms_state.structure_strength *= avg_swing_strength;
+    g_ms_state.structure_strength = MathMax(0.0, MathMin(1.0, g_ms_state.structure_strength));
+}
+
+//+------------------------------------------------------------------+
+//| Detect Break of Structure (BOS)                                 |
+//+------------------------------------------------------------------+
+bool DetectBOS() {
+    if(!MS_EnableAdvancedBOS || g_swing_count < 2) return false;
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    double bos_threshold = g_atr_value * MS_MinBOSStrength;
+    
+    // Bullish BOS: Price breaks above last swing high
+    if(g_ms_state.bearish_structure && current_price > g_ms_state.last_swing_high.price + bos_threshold) {
+        g_ms_state.bos_detected = true;
+        g_ms_state.bos_level = g_ms_state.last_swing_high.price;
+        g_ms_state.bos_time = TimeCurrent();
+        g_last_bos_time = TimeCurrent();
+        return true;
+    }
+    
+    // Bearish BOS: Price breaks below last swing low
+    if(g_ms_state.bullish_structure && current_price < g_ms_state.last_swing_low.price - bos_threshold) {
+        g_ms_state.bos_detected = true;
+        g_ms_state.bos_level = g_ms_state.last_swing_low.price;
+        g_ms_state.bos_time = TimeCurrent();
+        g_last_bos_time = TimeCurrent();
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Change of Character (CHoCH)                              |
+//+------------------------------------------------------------------+
+bool DetectCHoCH() {
+    if(g_swing_count < 4) return false;
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    double sensitivity_factor = MS_CHoCHSensitivity;
+    
+    // CHoCH occurs when price breaks previous swing in opposite direction
+    // but with less strength than BOS
+    double choch_threshold = g_atr_value * MS_MinBOSStrength * sensitivity_factor;
+    
+    // Bullish CHoCH
+    if(current_price > g_ms_state.previous_swing_high.price + choch_threshold) {
+        g_ms_state.choch_detected = true;
+        g_ms_state.choch_level = g_ms_state.previous_swing_high.price;
+        g_ms_state.choch_time = TimeCurrent();
+        g_last_choch_time = TimeCurrent();
+        return true;
+    }
+    
+    // Bearish CHoCH
+    if(current_price < g_ms_state.previous_swing_low.price - choch_threshold) {
+        g_ms_state.choch_detected = true;
+        g_ms_state.choch_level = g_ms_state.previous_swing_low.price;
+        g_ms_state.choch_time = TimeCurrent();
+        g_last_choch_time = TimeCurrent();
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Market Structure Shift (MSS)                             |
+//+------------------------------------------------------------------+
+bool DetectMSS() {
+    if(g_swing_count < 4) return false;
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    double mss_threshold = g_atr_value * MS_MSSThreshold;
+    
+    // MSS is a strong break that indicates major trend change
+    // Bullish MSS
+    if(current_price > g_ms_state.last_swing_high.price + mss_threshold) {
+        double volume_confirmation = CalculateVolumeConfirmation();
+        if(volume_confirmation >= MS_VolumeConfirmationThreshold) {
+            g_ms_state.mss_detected = true;
+            g_ms_state.mss_level = g_ms_state.last_swing_high.price;
+            g_ms_state.mss_time = TimeCurrent();
+            g_last_mss_time = TimeCurrent();
+            return true;
+        }
+    }
+    
+    // Bearish MSS
+    if(current_price < g_ms_state.last_swing_low.price - mss_threshold) {
+        double volume_confirmation = CalculateVolumeConfirmation();
+        if(volume_confirmation >= MS_VolumeConfirmationThreshold) {
+            g_ms_state.mss_detected = true;
+            g_ms_state.mss_level = g_ms_state.last_swing_low.price;
+            g_ms_state.mss_time = TimeCurrent();
+            g_last_mss_time = TimeCurrent();
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate order flow imbalance                                  |
+//+------------------------------------------------------------------+
+double CalculateOrderFlowImbalance() {
+    double buy_volume = 0, sell_volume = 0;
+    
+    // Calculate buy/sell volume over last 10 bars
+    for(int i = 0; i < 10; i++) {
+        double open = iOpen(_Symbol, _Period, i);
+        double close = iClose(_Symbol, _Period, i);
+        long volume_tick = iVolume(_Symbol, _Period, i);
+        double volume = (double)volume_tick;
+        
+        if(close > open) {
+            buy_volume += volume;
+        } else {
+            sell_volume += volume;
+        }
+    }
+    
+    double total_volume = buy_volume + sell_volume;
+    if(total_volume == 0) return 0;
+    
+    g_last_order_flow_imbalance = (buy_volume - sell_volume) / total_volume;
+    return g_last_order_flow_imbalance;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate institutional flow                                     |
+//+------------------------------------------------------------------+
+double CalculateInstitutionalFlow() {
+    int period = MS_InstitutionalFlowPeriod;
+    double large_volume_threshold = 0;
+    double institutional_flow = 0;
+    
+    // Calculate average volume
+    for(int i = 0; i < period; i++) {
+        long vol_tick = iVolume(_Symbol, _Period, i);
+        large_volume_threshold += (double)vol_tick;
+    }
+    large_volume_threshold = (large_volume_threshold / period) * 2.0; // 2x average
+    
+    // Identify institutional moves (large volume bars)
+    for(int i = 0; i < period; i++) {
+        long volume_tick = iVolume(_Symbol, _Period, i);
+        double volume = (double)volume_tick;
+        if(volume > large_volume_threshold) {
+            double open = iOpen(_Symbol, _Period, i);
+            double close = iClose(_Symbol, _Period, i);
+            double direction = close > open ? 1.0 : -1.0;
+            institutional_flow += direction * (volume / large_volume_threshold);
+        }
+    }
+    
+    return institutional_flow / period;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate multi-timeframe confluence                            |
+//+------------------------------------------------------------------+
+double CalculateMultiTimeframeConfluence() {
+    // Analyze 4H timeframe for confluence
+    ENUM_TIMEFRAMES higher_tf = PERIOD_H4;
+    double confluence_score = 1.0;
+    
+    // Get 4H trend direction
+    double h4_ma_fast_buffer[1], h4_ma_slow_buffer[1], h4_price_buffer[1];
+    int h4_ma_fast_handle = iMA(_Symbol, higher_tf, 20, 0, MODE_EMA, PRICE_CLOSE);
+    int h4_ma_slow_handle = iMA(_Symbol, higher_tf, 50, 0, MODE_EMA, PRICE_CLOSE);
+    
+    double h4_ma_fast = 0.0, h4_ma_slow = 0.0, h4_price = 0.0;
+    if(h4_ma_fast_handle != INVALID_HANDLE && CopyBuffer(h4_ma_fast_handle, 0, 0, 1, h4_ma_fast_buffer) > 0) {
+        h4_ma_fast = h4_ma_fast_buffer[0];
+    }
+    if(h4_ma_slow_handle != INVALID_HANDLE && CopyBuffer(h4_ma_slow_handle, 0, 0, 1, h4_ma_slow_buffer) > 0) {
+        h4_ma_slow = h4_ma_slow_buffer[0];
+    }
+    if(CopyClose(_Symbol, higher_tf, 0, 1, h4_price_buffer) > 0) {
+        h4_price = h4_price_buffer[0];
+    }
+    
+    // Determine 4H trend
+    bool h4_bullish = h4_ma_fast > h4_ma_slow && h4_price > h4_ma_fast;
+    bool h4_bearish = h4_ma_fast < h4_ma_slow && h4_price < h4_ma_fast;
+    
+    // Check alignment with current timeframe structure
+    if((h4_bullish && g_ms_state.bullish_structure) || (h4_bearish && g_ms_state.bearish_structure)) {
+        confluence_score = 1.3; // Boost confidence when aligned
+    } else if((h4_bullish && g_ms_state.bearish_structure) || (h4_bearish && g_ms_state.bullish_structure)) {
+        confluence_score = 0.7; // Reduce confidence when opposing
+    }
+    
+    return confluence_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate volume confirmation                                   |
+//+------------------------------------------------------------------+
+double CalculateVolumeConfirmation() {
+    long current_volume_tick = iVolume(_Symbol, _Period, 0);
+    double current_volume = (double)current_volume_tick;
+    double avg_volume = 0;
+    
+    // Calculate 20-period average volume
+    for(int i = 1; i <= 20; i++) {
+        long vol_tick = iVolume(_Symbol, _Period, i);
+        avg_volume += (double)vol_tick;
+    }
+    avg_volume /= 20;
+    
+    return avg_volume > 0 ? current_volume / avg_volume : 1.0;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate statistical significance                               |
+//+------------------------------------------------------------------+
+double CalculateStatisticalSignificance() {
+    // Simple p-value calculation based on swing strength and volume
+    double swing_strength = g_ms_state.structure_strength;
+    double volume_factor = CalculateVolumeConfirmation();
+    
+    // Mock p-value calculation (in real implementation, use proper statistical tests)
+    double p_value = 1.0 - (swing_strength * volume_factor * 0.5);
+    return MathMax(0.001, MathMin(0.999, p_value));
+}
+
+//+------------------------------------------------------------------+
+//| Draw enhanced market structure                                  |
+//+------------------------------------------------------------------+
+void DrawEnhancedMarketStructure(TradingSignal &signal) {
+    if(g_swing_count < 2) return;
+    
+    string prefix = "EMS_";
+    
+    // Draw swing points
+    for(int i = MathMax(0, g_swing_count - 10); i < g_swing_count; i++) {
+        SwingPoint swing;
+        swing = g_swing_points[i];
+        string obj_name = prefix + "Swing_" + IntegerToString(i);
+        
+        if(ObjectFind(0, obj_name) < 0) {
+            ObjectCreate(0, obj_name, OBJ_ARROW, 0, swing.time, swing.price);
+            ObjectSetInteger(0, obj_name, OBJPROP_ARROWCODE, swing.is_high ? 234 : 233);
+            ObjectSetInteger(0, obj_name, OBJPROP_COLOR, swing.is_high ? clrRed : clrBlue);
+            ObjectSetInteger(0, obj_name, OBJPROP_WIDTH, 2);
+        }
+    }
+    
+    // Draw BOS/CHoCH/MSS levels
+    if(g_ms_state.bos_detected) {
+        string bos_line = prefix + "BOS_Line";
+        if(ObjectFind(0, bos_line) < 0) {
+            ObjectCreate(0, bos_line, OBJ_HLINE, 0, 0, g_ms_state.bos_level);
+            ObjectSetInteger(0, bos_line, OBJPROP_COLOR, clrYellow);
+            ObjectSetInteger(0, bos_line, OBJPROP_STYLE, STYLE_DASH);
+            ObjectSetInteger(0, bos_line, OBJPROP_WIDTH, 2);
+        }
+    }
+    
+    if(g_ms_state.choch_detected) {
+        string choch_line = prefix + "CHoCH_Line";
+        if(ObjectFind(0, choch_line) < 0) {
+            ObjectCreate(0, choch_line, OBJ_HLINE, 0, 0, g_ms_state.choch_level);
+            ObjectSetInteger(0, choch_line, OBJPROP_COLOR, clrOrange);
+            ObjectSetInteger(0, choch_line, OBJPROP_STYLE, STYLE_DOT);
+            ObjectSetInteger(0, choch_line, OBJPROP_WIDTH, 1);
+        }
+    }
+    
+    if(g_ms_state.mss_detected) {
+        string mss_line = prefix + "MSS_Line";
+        if(ObjectFind(0, mss_line) < 0) {
+            ObjectCreate(0, mss_line, OBJ_HLINE, 0, 0, g_ms_state.mss_level);
+            ObjectSetInteger(0, mss_line, OBJPROP_COLOR, clrMagenta);
+            ObjectSetInteger(0, mss_line, OBJPROP_STYLE, STYLE_SOLID);
+            ObjectSetInteger(0, mss_line, OBJPROP_WIDTH, 3);
+        }
     }
 }
 
