@@ -1076,7 +1076,8 @@ void RunOrderBlockStrategy() {
     UpdateOrderBlocks();
 
     // Generate signals from valid blocks
-    TradingSignal signal = GenerateOrderBlockSignal();
+    TradingSignal signal;
+    signal = GenerateOrderBlockSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_ORDER_BLOCK, signal);
     }
@@ -1450,7 +1451,8 @@ double CalculateStatisticalSignificance(OrderBlock &block) {
 void CreateBlockVisual(int block_index) {
     if(block_index < 0 || block_index >= g_block_count) return;
 
-    OrderBlock block = g_order_blocks[block_index];
+    OrderBlock block;
+    block = g_order_blocks[block_index];
     color block_color = block.is_bullish ? clrBlue : clrRed;
 
     // Create rectangle
@@ -1548,7 +1550,8 @@ void CheckBlockBreak(int block_index, double current_high, double current_low) {
 void UpdateBlockVisual(int block_index) {
     if(block_index < 0 || block_index >= g_block_count) return;
 
-    OrderBlock block = g_order_blocks[block_index];
+    OrderBlock block;
+    block = g_order_blocks[block_index];
 
     // Update rectangle end time
     ObjectSetInteger(0, block.obj_name, OBJPROP_TIME, 1, TimeCurrent() + PeriodSeconds() * 100);
@@ -1580,7 +1583,8 @@ TradingSignal GenerateOrderBlockSignal() {
     double best_strength = 0.0;
 
     for(int i = 0; i < g_block_count; i++) {
-        OrderBlock block = g_order_blocks[i];
+        OrderBlock block;
+        block = g_order_blocks[i];
         if(block.is_fresh && !block.is_broken && !block.signal_sent &&
            block.strength > best_strength && block.strength >= OB_MinBlockStrength) {
             best_block = i;
@@ -1589,7 +1593,8 @@ TradingSignal GenerateOrderBlockSignal() {
     }
 
     if(best_block >= 0) {
-        OrderBlock block = g_order_blocks[best_block];
+        OrderBlock block;
+        block = g_order_blocks[best_block];
         double current_price = (SymbolInfoDouble(_Symbol, SYMBOL_ASK) + SymbolInfoDouble(_Symbol, SYMBOL_BID)) / 2;
 
         // Check if price is near the block
@@ -1670,7 +1675,8 @@ void CleanupOrderBlocks() {
 //| Run Fair Value Gap strategy                                      |
 //+------------------------------------------------------------------+
 void RunFairValueGapStrategy() {
-    TradingSignal signal = GenerateFairValueGapSignal();
+    TradingSignal signal;
+    signal = GenerateFairValueGapSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_FAIR_VALUE_GAP, signal);
         // Draw Fair Value Gap if signal is valid
@@ -1699,7 +1705,8 @@ TradingSignal GenerateFairValueGapSignal() {
 
     // Check last 20 bars for FVG patterns (increased range for better detection)
     for(int i = 2; i <= 20; i++) {
-        FairValueGap gap = DetectEnhancedFVG(i);
+        FairValueGap gap;
+        gap = DetectEnhancedFVG(i);
         if(gap.statistical_significance > 0.6 && gap.fill_probability > 0.7) {
             double total_score = gap.statistical_significance * gap.fill_probability * gap.volume_confirmation;
             if(total_score > best_score) {
@@ -1934,7 +1941,8 @@ bool CheckHammerPattern(int index) {
 //| Run Market Structure strategy                                    |
 //+------------------------------------------------------------------+
 void RunMarketStructureStrategy() {
-    TradingSignal signal = GenerateMarketStructureSignal();
+    TradingSignal signal;
+    signal = GenerateMarketStructureSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_MARKET_STRUCTURE, signal);
         // Draw Market Structure if signal is valid
@@ -2000,7 +2008,8 @@ void RunRangeBreakoutStrategy() {
     // Update daily range
     UpdateDailyRange();
 
-    TradingSignal signal = GenerateRangeBreakoutSignal();
+    TradingSignal signal;
+    signal = GenerateRangeBreakoutSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_RANGE_BREAKOUT, signal);
         // Draw Range Breakout levels
@@ -2106,7 +2115,8 @@ void RunSupportResistanceStrategy() {
     // Enhanced S/R level detection with professional algorithms
     UpdateEnhancedSupportResistanceLevels();
 
-    TradingSignal signal = GenerateEnhancedSupportResistanceSignal();
+    TradingSignal signal;
+    signal = GenerateEnhancedSupportResistanceSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_SUPPORT_RESISTANCE, signal);
     }
@@ -2201,7 +2211,8 @@ void UpdateEnhancedSupportResistanceLevels() {
 
         // Check for swing high (resistance)
         if(IsSwingHigh(i, 5)) {
-            SRLevel level = CreateEnhancedSRLevel(high, time, false, true, volume);
+            SRLevel level;
+            level = CreateEnhancedSRLevel(high, time, false, true, volume);
             if(level.strength_score >= 0.6) { // Professional threshold
                 AddOrUpdateSRLevel(level);
             }
@@ -2209,7 +2220,8 @@ void UpdateEnhancedSupportResistanceLevels() {
 
         // Check for swing low (support)
         if(IsSwingLow(i, 5)) {
-            SRLevel level = CreateEnhancedSRLevel(low, time, true, false, volume);
+            SRLevel level;
+            level = CreateEnhancedSRLevel(low, time, true, false, volume);
             if(level.strength_score >= 0.6) { // Professional threshold
                 AddOrUpdateSRLevel(level);
             }
