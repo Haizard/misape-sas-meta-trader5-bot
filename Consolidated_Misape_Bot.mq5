@@ -173,11 +173,11 @@ input double ATR_Multiplier_TP = 3.0;      // ATR multiplier for take profit
 
 input group "=== Trailing Stop Settings ==="
 input bool EnableTrailingStop = true;     // Enable trailing stop mechanism
-input double TrailingStop_ATR_Multiplier = 0.8; // ATR multiplier for trailing stop (very tight for quick profit protection)
-input double ProfitActivationPoints = 5.0; // Minimum profit in points to activate trailing stop
-input bool UseATRBasedActivation = true;   // Use ATR-based profit activation instead of fixed points
-input double ATR_Multiplier_Activation = 0.5; // ATR multiplier for profit activation threshold (quick activation)
-input int TrailingStepPoints = 3;          // Minimum step size for trailing stop adjustment (tighter steps)
+input double TrailingStop_ATR_Multiplier = 0.3; // ATR multiplier for trailing stop (ultra-tight scalping)
+input double ProfitActivationPoints = 1.0; // Minimum profit in points to activate trailing stop (ultra-fast)
+input bool UseATRBasedActivation = false;  // Use fixed points for immediate activation
+input double ATR_Multiplier_Activation = 0.2; // ATR multiplier for profit activation threshold
+input int TrailingStepPoints = 1;          // Minimum step size for trailing stop adjustment (1 point steps)
 
 input group "=== Dashboard Settings ==="
 input bool EnableDashboard = true;         // Enable/disable the visual dashboard
