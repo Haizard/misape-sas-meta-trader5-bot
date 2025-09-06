@@ -21,4 +21,7 @@
 
 
 
-   now i want you to perform an advanced research on my bot. Support/Resistance on how it worked in my bot and then go online in the google scholar to find strategics, logic, implementantion and advanced features like trendline breakout and other features in the Market Support/Resistance at the sametime you must find advanced mathematical calculation used in the Support/Resistance features also you must make the Support/Resistance to perfom analysis in both 4hr chart to find good entry in small time frame.
+   now i want you to perform an advanced research on my bot. on those Chart Pattern on how they worked in my bot and then go online in the google scholar to find prove logic, implementantion and advanced features and other  the Market Support/Resistance at the sametime you must find advanced mathematical calculation used in the Support/Resistance features also you must make the Support/Resistance to perfom analysis in both 4hr chart to find good entry in small time frame.
+
+
+    now i want you to perform an advanced research on my bot. on those Chart Pattern on how they worked in my bot and then go online in the google scholar to find prove logic, implementaion, features they have, mathematical calculation , techiniques to use them, logics abd other important documentation. 
