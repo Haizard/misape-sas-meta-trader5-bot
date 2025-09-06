@@ -313,8 +313,8 @@ double CalculateMultiTimeframeConfluence() {
     for(int tf = 0; tf < 4; tf++) {
         if(timeframes[tf] >= _Period) { // Only use higher timeframes
             // Get trend direction for this timeframe
-            double ema_fast = iMA(_Symbol, timeframes[tf], 20, 0, MODE_EMA, PRICE_CLOSE, 1);
-            double ema_slow = iMA(_Symbol, timeframes[tf], 50, 0, MODE_EMA, PRICE_CLOSE, 1);
+            double ema_fast = iMA(_Symbol, timeframes[tf], 20, 0, MODE_EMA, PRICE_CLOSE);
+            double ema_slow = iMA(_Symbol, timeframes[tf], 50, 0, MODE_EMA, PRICE_CLOSE);
             double current_price = iClose(_Symbol, timeframes[tf], 1);
             
             double trend_strength = 0.0;

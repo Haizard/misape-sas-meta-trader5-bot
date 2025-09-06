@@ -241,6 +241,20 @@ struct PatternRiskParameters {
     double risk_reward_ratio;    // Risk to reward ratio
     double position_size_factor; // Position size adjustment factor
     double confidence_multiplier; // Confidence-based adjustment
+    PatternRiskParameters() {
+        stop_loss_ratio = 1.5;
+        take_profit_ratio = 3.0;
+        risk_reward_ratio = 2.0;
+        position_size_factor = 1.0;
+        confidence_multiplier = 1.0;
+    }
+    PatternRiskParameters(const PatternRiskParameters &other) {
+        stop_loss_ratio = other.stop_loss_ratio;
+        take_profit_ratio = other.take_profit_ratio;
+        risk_reward_ratio = other.risk_reward_ratio;
+        position_size_factor = other.position_size_factor;
+        confidence_multiplier = other.confidence_multiplier;
+    }
 };
 
 struct MultiTimeframePatternAnalysis {
@@ -251,6 +265,24 @@ struct MultiTimeframePatternAnalysis {
     bool higher_tf_trend_alignment;
     bool lower_tf_entry_confirmation;
     double pattern_strength_mtf;
+    MultiTimeframePatternAnalysis() {
+        primary_timeframe = PERIOD_CURRENT;
+        higher_timeframe = PERIOD_H1;
+        lower_timeframe = PERIOD_M15;
+        confluence_score = 0.0;
+        higher_tf_trend_alignment = false;
+        lower_tf_entry_confirmation = false;
+        pattern_strength_mtf = 0.0;
+    }
+    MultiTimeframePatternAnalysis(const MultiTimeframePatternAnalysis &other) {
+        primary_timeframe = other.primary_timeframe;
+        higher_timeframe = other.higher_timeframe;
+        lower_timeframe = other.lower_timeframe;
+        confluence_score = other.confluence_score;
+        higher_tf_trend_alignment = other.higher_tf_trend_alignment;
+        lower_tf_entry_confirmation = other.lower_tf_entry_confirmation;
+        pattern_strength_mtf = other.pattern_strength_mtf;
+    }
 };
 
 struct PatternConfidenceMatrix {
@@ -5463,8 +5495,8 @@ double CalculatePatternMultiTimeframeConfluence(ENUM_CHART_PATTERN_TYPE pattern_
 //+------------------------------------------------------------------+
 bool CheckHigherTimeframeTrendAlignment(ENUM_TIMEFRAMES timeframe) {
     // Use EMA crossover for trend direction
-    double ema_fast = iMA(_Symbol, timeframe, 20, 0, MODE_EMA, PRICE_CLOSE, 1);
-    double ema_slow = iMA(_Symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE, 1);
+    double ema_fast = iMA(_Symbol, timeframe, 20, 0, MODE_EMA, PRICE_CLOSE);
+    double ema_slow = iMA(_Symbol, timeframe, 50, 0, MODE_EMA, PRICE_CLOSE);
     double current_price = iClose(_Symbol, timeframe, 1);
     
     if(ema_fast == EMPTY_VALUE || ema_slow == EMPTY_VALUE) return false;
@@ -5608,7 +5640,7 @@ ENUM_TIMEFRAMES GetLowerTimeframe(ENUM_TIMEFRAMES current_tf) {
 //+------------------------------------------------------------------+
 bool CheckLowerTimeframeEntry(ENUM_TIMEFRAMES timeframe) {
     // Check for momentum confirmation on lower timeframe
-    double rsi = iRSI(_Symbol, timeframe, 14, PRICE_CLOSE, 1);
+    double rsi = iRSI(_Symbol, timeframe, 14, PRICE_CLOSE);
     
     if(rsi == EMPTY_VALUE) return false;
     
@@ -9365,7 +9397,7 @@ bool IsCacheValid() {
     
     datetime current_time = TimeCurrent();
     int current_bars = Bars(_Symbol, PERIOD_CURRENT);
-    double current_atr = iATR(_Symbol, PERIOD_CURRENT, 14, 0);
+    double current_atr = iATR(_Symbol, PERIOD_CURRENT, 14);
     
     // Cache expires after 1 minute or if significant market change
     if (current_time - g_pattern_cache.last_calculation_time > 60) return false;
@@ -9380,7 +9412,7 @@ bool IsCacheValid() {
 //+------------------------------------------------------------------+
 void UpdatePatternCache(double volatility_ratio, double market_context) {
     g_pattern_cache.last_calculation_time = TimeCurrent();
-    g_pattern_cache.last_atr_value = iATR(_Symbol, PERIOD_CURRENT, 14, 0);
+    g_pattern_cache.last_atr_value = iATR(_Symbol, PERIOD_CURRENT, 14);
     g_pattern_cache.last_bar_count = Bars(_Symbol, PERIOD_CURRENT);
     g_pattern_cache.cached_volatility_ratio = volatility_ratio;
     g_pattern_cache.cached_market_context = market_context;
@@ -9846,8 +9878,8 @@ double CalculateMarketContext() {
     }
     
     // Trend strength analysis
-    double ma_fast = iMA(_Symbol, _Period, 20, 0, MODE_SMA, PRICE_CLOSE, 1);
-    double ma_slow = iMA(_Symbol, _Period, 50, 0, MODE_SMA, PRICE_CLOSE, 1);
+    double ma_fast = iMA(_Symbol, _Period, 20, 0, MODE_SMA, PRICE_CLOSE);
+    double ma_slow = iMA(_Symbol, _Period, 50, 0, MODE_SMA, PRICE_CLOSE);
     double current_price = iClose(_Symbol, _Period, 1);
     
     if(ma_fast != EMPTY_VALUE && ma_slow != EMPTY_VALUE) {
