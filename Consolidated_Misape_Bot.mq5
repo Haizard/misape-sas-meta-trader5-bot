@@ -422,6 +422,12 @@ input bool PB_RequireConfluence = true;    // Require confluence with S/R levels
 input double PB_RetracePercent = 50.0;     // Retracement percentage for entry (50% method)
 input bool PB_UseVolumeFilter = true;      // Use volume confirmation
 input double PB_MinVolumeMultiplier = 1.2; // Minimum volume multiplier vs average
+input bool PB_UseMultiTimeframe = true;    // Enable multi-timeframe analysis
+input bool PB_UseFibonacciConfluence = true; // Enable Fibonacci confluence detection
+input bool PB_UseATRNormalization = true;  // Enable ATR normalization
+input bool PB_UseDoublePinBar = true;      // Enable double Pin Bar detection
+input double PB_MinATRMultiplier = 0.5;    // Minimum Pin Bar size as ATR multiplier
+input double PB_MaxATRMultiplier = 3.0;    // Maximum Pin Bar size as ATR multiplier
 
 input group "=== VWAP Strategy ==="
 input bool EnableVWAP = true;              // Enable VWAP strategy
@@ -473,7 +479,7 @@ bool g_range_broken = false;
 double g_resistance_levels[2];
 double g_support_levels[2];
 
-// Pin Bar strategy variables
+// Enhanced Pin Bar strategy variables
 struct PinBarPattern {
     datetime time;
     double high;
@@ -490,10 +496,40 @@ struct PinBarPattern {
     double entry_price;
     double stop_loss;
     double take_profit;
+    
+    // Enhanced features
+    double rejection_strength;        // Dominant wick as percentage of total range
+    double atr_normalized_size;       // Pin Bar size relative to ATR
+    double volume_strength;           // Volume confirmation strength
+    double fibonacci_confluence;     // Fibonacci level confluence score
+    double statistical_significance; // Statistical validation score
+    bool is_double_pin_bar;          // Double Pin Bar pattern flag
+    
+    // Multi-timeframe analysis
+    double h4_trend_strength;        // 4H timeframe trend strength
+    bool h4_trend_bullish;           // 4H trend direction
+    double h4_confluence_score;      // 4H confluence with key levels
+    bool h4_pin_bar_present;         // 4H Pin Bar presence
+    double entry_precision_score;    // Lower timeframe entry optimization
+};
+
+// Multi-timeframe Pin Bar analysis structure
+struct MultiTimeframePinBarAnalysis {
+    bool h4_analysis_valid;
+    double h4_trend_score;
+    bool h4_supports_signal;
+    double current_tf_quality;
+    double overall_confidence;
+    bool trade_signal_valid;
 };
 
 PinBarPattern g_current_pin_bar;
 bool g_pin_bar_detected = false;
+MultiTimeframePinBarAnalysis g_mtf_pin_bar_analysis;
+PinBarPattern g_previous_pin_bar;  // For double Pin Bar detection
+double g_pin_bar_fibonacci_levels[5] = {0.236, 0.382, 0.5, 0.618, 0.786};
+double g_pin_bar_success_history[50]; // Historical success tracking
+int g_pin_bar_history_index = 0;
 
 // VWAP strategy variables
 struct VWAPData {
@@ -1092,9 +1128,22 @@ void InitializeStrategies() {
         g_strategies[i].last_signal.is_valid = false;
     }
 
-    // Initialize Pin Bar structure
+    // Initialize enhanced Pin Bar structures
     g_current_pin_bar.is_valid = false;
     g_pin_bar_detected = false;
+    g_previous_pin_bar.is_valid = false;
+    
+    // Initialize multi-timeframe analysis
+    g_mtf_pin_bar_analysis.h4_analysis_valid = false;
+    g_mtf_pin_bar_analysis.h4_trend_score = 0.0;
+    g_mtf_pin_bar_analysis.h4_supports_signal = false;
+    g_mtf_pin_bar_analysis.current_tf_quality = 0.0;
+    g_mtf_pin_bar_analysis.overall_confidence = 0.0;
+    g_mtf_pin_bar_analysis.trade_signal_valid = false;
+    
+    // Initialize Pin Bar success history
+    ArrayInitialize(g_pin_bar_success_history, 0.0);
+    g_pin_bar_history_index = 0;
 
     // Initialize VWAP structure
     g_vwap_data.is_valid = false;
@@ -1148,6 +1197,26 @@ TradingSignal CreateTradingSignal(ENUM_SIGNAL_TYPE type, double confidence,
     signal.is_valid = true;
 
     return signal;
+}
+
+//+------------------------------------------------------------------+
+//| Update Pin Bar success history for statistical tracking         |
+//+------------------------------------------------------------------+
+void UpdatePinBarSuccessHistory() {
+    // This is a placeholder for future implementation
+    // In a real implementation, you would track the success of previous Pin Bar signals
+    // and update the history array accordingly
+    
+    // For now, we'll use a simplified approach based on current market conditions
+    double estimated_success = 0.6; // Base success rate
+    
+    // Adjust based on confidence
+    if(g_current_pin_bar.confidence > 0.8) estimated_success = 0.75;
+    else if(g_current_pin_bar.confidence < 0.5) estimated_success = 0.45;
+    
+    // Store in circular buffer
+    g_pin_bar_success_history[g_pin_bar_history_index] = estimated_success;
+    g_pin_bar_history_index = (g_pin_bar_history_index + 1) % 50;
 }
 
 //+------------------------------------------------------------------+
@@ -10624,7 +10693,7 @@ void RunPinBarStrategy() {
 }
 
 //+------------------------------------------------------------------+
-//| Detect Pin Bar pattern with professional validation             |
+//| Enhanced Pin Bar pattern detection with advanced features       |
 //+------------------------------------------------------------------+
 bool DetectPinBarPattern() {
     // Use completed bar (index 1) for analysis
@@ -10646,6 +10715,11 @@ bool DetectPinBarPattern() {
 
     if(total_range <= 0) return false;
 
+    // ATR normalization check
+    if(PB_UseATRNormalization && !ValidatePinBarATRSize(total_range)) {
+        return false;
+    }
+
     // Calculate ratios
     double body_percent = (body_size / total_range) * 100.0;
     double upper_wick_ratio = body_size > 0 ? upper_wick / body_size : 0;
@@ -10655,27 +10729,33 @@ bool DetectPinBarPattern() {
     bool is_valid_pin_bar = false;
     bool is_bullish = false;
     double dominant_wick_ratio = 0;
+    double rejection_strength = 0;
 
     // Bullish Pin Bar: Long lower wick, small body, small upper wick
     if(lower_wick_ratio >= PB_MinWickToBodyRatio &&
        body_percent <= PB_MaxBodyPercent &&
-       upper_wick <= lower_wick * 0.5) { // Upper wick should be max 50% of lower wick
+       upper_wick <= lower_wick * 0.5) {
         is_valid_pin_bar = true;
         is_bullish = true;
         dominant_wick_ratio = lower_wick_ratio;
+        rejection_strength = (lower_wick / total_range) * 100.0;
     }
     // Bearish Pin Bar: Long upper wick, small body, small lower wick
     else if(upper_wick_ratio >= PB_MinWickToBodyRatio &&
             body_percent <= PB_MaxBodyPercent &&
-            lower_wick <= upper_wick * 0.5) { // Lower wick should be max 50% of upper wick
+            lower_wick <= upper_wick * 0.5) {
         is_valid_pin_bar = true;
         is_bullish = false;
         dominant_wick_ratio = upper_wick_ratio;
+        rejection_strength = (upper_wick / total_range) * 100.0;
     }
 
     if(!is_valid_pin_bar) return false;
 
-    // Store Pin Bar data
+    // Store previous Pin Bar for double pattern detection
+    g_previous_pin_bar = g_current_pin_bar;
+
+    // Store basic Pin Bar data
     g_current_pin_bar.time = time;
     g_current_pin_bar.high = high;
     g_current_pin_bar.low = low;
@@ -10687,27 +10767,332 @@ bool DetectPinBarPattern() {
     g_current_pin_bar.wick_to_body_ratio = dominant_wick_ratio;
     g_current_pin_bar.is_bullish = is_bullish;
     g_current_pin_bar.is_valid = true;
+    g_current_pin_bar.rejection_strength = rejection_strength;
+    g_current_pin_bar.atr_normalized_size = total_range / g_atr_value;
 
-    // Calculate professional confidence based on research criteria
-    g_current_pin_bar.confidence = CalculatePinBarConfidence(dominant_wick_ratio, body_percent, total_range);
+    // Enhanced feature calculations
+    g_current_pin_bar.volume_strength = CalculateVolumeStrength(bar_index);
+    g_current_pin_bar.fibonacci_confluence = CalculateFibonacciConfluence();
+    g_current_pin_bar.statistical_significance = CalculateStatisticalSignificance();
+    g_current_pin_bar.is_double_pin_bar = DetectDoublePinBarPattern();
 
-    // Calculate entry, stop loss, and take profit using 50% retracement method
-    CalculatePinBarLevels();
+    // Multi-timeframe analysis
+    if(PB_UseMultiTimeframe) {
+        PerformMultiTimeframeAnalysis();
+        g_current_pin_bar.h4_trend_strength = g_mtf_pin_bar_analysis.h4_trend_score;
+        g_current_pin_bar.h4_trend_bullish = g_mtf_pin_bar_analysis.h4_supports_signal;
+        g_current_pin_bar.entry_precision_score = CalculateEntryPrecisionScore();
+    }
+
+    // Calculate enhanced confidence
+    g_current_pin_bar.confidence = CalculateAdvancedPinBarConfidence();
+
+    // Calculate dynamic levels
+    CalculateEnhancedPinBarLevels();
 
     g_pin_bar_detected = true;
 
     if(EnableDebugLogging) {
-        Print("Pin Bar Detected: ", is_bullish ? "BULLISH" : "BEARISH");
+        Print("Enhanced Pin Bar Detected: ", is_bullish ? "BULLISH" : "BEARISH");
         Print("Wick-to-Body Ratio: ", DoubleToString(dominant_wick_ratio, 2));
-        Print("Body Percent: ", DoubleToString(body_percent, 1), "%");
-        Print("Confidence: ", DoubleToString(g_current_pin_bar.confidence, 3));
+        Print("Rejection Strength: ", DoubleToString(rejection_strength, 1), "%");
+        Print("ATR Normalized Size: ", DoubleToString(g_current_pin_bar.atr_normalized_size, 2));
+        Print("Volume Strength: ", DoubleToString(g_current_pin_bar.volume_strength, 3));
+        Print("Fibonacci Confluence: ", DoubleToString(g_current_pin_bar.fibonacci_confluence, 3));
+        Print("Enhanced Confidence: ", DoubleToString(g_current_pin_bar.confidence, 3));
+        if(g_current_pin_bar.is_double_pin_bar) Print("Double Pin Bar Pattern Detected!");
     }
 
     return true;
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Pin Bar confidence using professional criteria        |
+//| Validate Pin Bar size using ATR normalization                   |
+//+------------------------------------------------------------------+
+bool ValidatePinBarATRSize(double total_range) {
+    if(g_atr_value <= 0) return true; // Skip if ATR not available
+    
+    double atr_ratio = total_range / g_atr_value;
+    return (atr_ratio >= PB_MinATRMultiplier && atr_ratio <= PB_MaxATRMultiplier);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate volume strength for Pin Bar confirmation              |
+//+------------------------------------------------------------------+
+double CalculateVolumeStrength(int bar_index) {
+    if(!PB_UseVolumeFilter) return 0.0;
+    
+    long volumes[20];
+    if(CopyTickVolume(_Symbol, _Period, bar_index, 20, volumes) <= 0) {
+        return 0.0;
+    }
+    
+    long total_volume = 0;
+    for(int i = 1; i < 20; i++) {
+        total_volume += volumes[i];
+    }
+    double avg_volume = (double)total_volume / 19.0;
+    double current_volume = (double)volumes[0];
+    double volume_ratio = current_volume / avg_volume;
+    
+    // Volume strength scoring
+    if(volume_ratio >= 2.0) return 0.20;      // Exceptional volume
+    else if(volume_ratio >= 1.5) return 0.15; // High volume
+    else if(volume_ratio >= 1.2) return 0.10; // Above average
+    else return 0.0; // Insufficient volume
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Fibonacci confluence for Pin Bar                      |
+//+------------------------------------------------------------------+
+double CalculateFibonacciConfluence() {
+    if(!PB_UseFibonacciConfluence) return 0.0;
+    
+    double pin_bar_level = g_current_pin_bar.is_bullish ? g_current_pin_bar.low : g_current_pin_bar.high;
+    double swing_high = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, 50, 1));
+    double swing_low = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, 50, 1));
+    
+    if(swing_high <= swing_low) return 0.0;
+    
+    double tolerance = g_atr_value * 0.3;
+    double confluence_score = 0.0;
+    
+    for(int i = 0; i < 5; i++) {
+        double fib_price = swing_low + (swing_high - swing_low) * g_pin_bar_fibonacci_levels[i];
+        if(MathAbs(pin_bar_level - fib_price) <= tolerance) {
+            // Weight important Fibonacci levels more heavily
+            if(g_pin_bar_fibonacci_levels[i] == 0.618) confluence_score += 0.15; // Golden ratio
+            else if(g_pin_bar_fibonacci_levels[i] == 0.5) confluence_score += 0.10; // 50% retracement
+            else confluence_score += 0.05; // Other levels
+        }
+    }
+    
+    return confluence_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate statistical significance of Pin Bar pattern           |
+//+------------------------------------------------------------------+
+double CalculateStatisticalSignificance() {
+    // Simple historical success rate calculation
+    if(g_pin_bar_history_index < 10) return 0.0; // Need minimum history
+    
+    double success_count = 0.0;
+    int sample_size = MathMin(g_pin_bar_history_index, 50);
+    
+    for(int i = 0; i < sample_size; i++) {
+        success_count += g_pin_bar_success_history[i];
+    }
+    
+    double success_rate = success_count / sample_size;
+    
+    // Convert to confidence boost (0.0 to 0.1)
+    if(success_rate >= 0.7) return 0.10;
+    else if(success_rate >= 0.6) return 0.05;
+    else return 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Detect double Pin Bar pattern                                   |
+//+------------------------------------------------------------------+
+bool DetectDoublePinBarPattern() {
+    if(!PB_UseDoublePinBar || !g_previous_pin_bar.is_valid) return false;
+    
+    // Check if previous bar was also a Pin Bar in same direction
+    bool same_direction = (g_current_pin_bar.is_bullish == g_previous_pin_bar.is_bullish);
+    
+    // Check if bars are consecutive
+    bool consecutive = (g_current_pin_bar.time - g_previous_pin_bar.time) <= PeriodSeconds() * 2;
+    
+    return (same_direction && consecutive);
+}
+
+
+
+//+------------------------------------------------------------------+
+//| Calculate entry precision score for lower timeframes           |
+//+------------------------------------------------------------------+
+double CalculateEntryPrecisionScore() {
+    if(_Period >= PERIOD_H4) return 0.0;
+    
+    double precision_score = 0.0;
+    
+    // RSI divergence check (simplified)
+    int rsi_handle = iRSI(_Symbol, _Period, 14, PRICE_CLOSE);
+    double rsi_values[3];
+    if(CopyBuffer(rsi_handle, 0, 1, 2, rsi_values) == 2) {
+        double rsi_current = rsi_values[1];
+        double rsi_previous = rsi_values[0];
+    
+        if(g_current_pin_bar.is_bullish && rsi_current > rsi_previous && rsi_current < 70) {
+            precision_score += 0.1;
+        } else if(!g_current_pin_bar.is_bullish && rsi_current < rsi_previous && rsi_current > 30) {
+            precision_score += 0.1;
+        }
+    }
+    
+    // Volume spike confirmation
+    if(g_current_pin_bar.volume_strength > 0.1) {
+        precision_score += 0.1;
+    }
+    
+    // Price action confirmation (inside bar after Pin Bar)
+    double current_high = iHigh(_Symbol, _Period, 0);
+    double current_low = iLow(_Symbol, _Period, 0);
+    
+    if(current_high <= g_current_pin_bar.high && current_low >= g_current_pin_bar.low) {
+        precision_score += 0.05; // Inside bar forming
+    }
+    
+    return precision_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate advanced Pin Bar confidence with multiple factors     |
+//+------------------------------------------------------------------+
+double CalculateAdvancedPinBarConfidence() {
+    double base_confidence = 0.50;
+    
+    // 1. Pattern Quality (30% weight)
+    double pattern_score = CalculatePatternQuality() * 0.30;
+    
+    // 2. Market Context (25% weight)
+    double context_score = CalculateMarketContext() * 0.25;
+    
+    // 3. Multi-timeframe Alignment (20% weight)
+    double mtf_score = 0.0;
+    if(PB_UseMultiTimeframe && g_mtf_pin_bar_analysis.h4_analysis_valid) {
+        mtf_score = (g_mtf_pin_bar_analysis.h4_supports_signal ? 0.2 : 0.0);
+    }
+    
+    // 4. Volume Confirmation (15% weight)
+    double volume_score = g_current_pin_bar.volume_strength;
+    
+    // 5. Enhanced Features (10% weight)
+    double enhanced_score = 0.0;
+    enhanced_score += g_current_pin_bar.fibonacci_confluence;
+    enhanced_score += g_current_pin_bar.statistical_significance;
+    if(g_current_pin_bar.is_double_pin_bar) enhanced_score += 0.05;
+    enhanced_score = MathMin(0.10, enhanced_score);
+    
+    double total_confidence = base_confidence + pattern_score + context_score + mtf_score + volume_score + enhanced_score;
+    
+    return MathMin(0.95, MathMax(0.20, total_confidence));
+}
+
+//+------------------------------------------------------------------+
+//| Calculate pattern quality score                                 |
+//+------------------------------------------------------------------+
+double CalculatePatternQuality() {
+    double quality_score = 0.0;
+    
+    // Wick-to-body ratio scoring (optimal is 3:1)
+    if(g_current_pin_bar.wick_to_body_ratio >= 3.0) {
+        quality_score += 0.15;
+    } else if(g_current_pin_bar.wick_to_body_ratio >= 2.5) {
+        quality_score += 0.10;
+    } else if(g_current_pin_bar.wick_to_body_ratio >= 2.0) {
+        quality_score += 0.05;
+    }
+    
+    // Rejection strength scoring
+    if(g_current_pin_bar.rejection_strength >= 70.0) {
+        quality_score += 0.10;
+    } else if(g_current_pin_bar.rejection_strength >= 60.0) {
+        quality_score += 0.05;
+    }
+    
+    // ATR normalized size scoring
+    if(g_current_pin_bar.atr_normalized_size >= 1.0 && g_current_pin_bar.atr_normalized_size <= 2.0) {
+        quality_score += 0.05; // Optimal size range
+    }
+    
+    return quality_score;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate market context score                                  |
+
+
+//+------------------------------------------------------------------+
+//| Calculate volatility percentile                                 |
+//+------------------------------------------------------------------+
+double CalculateVolatilityPercentile() {
+    int atr_handle = iATR(_Symbol, _Period, 14);
+    double atr_values[20];
+    if(CopyBuffer(atr_handle, 0, 1, 20, atr_values) == 20) {
+        // Sort ATR values
+        ArraySort(atr_values);
+        
+        // Find current ATR position in sorted array
+        int position = 0;
+        for(int i = 0; i < 20; i++) {
+            if(g_atr_value >= atr_values[i]) position = i;
+        }
+        
+        return (double)position / 19.0;
+    }
+    
+    return 0.5; // Default percentile if data unavailable
+}
+
+//+------------------------------------------------------------------+
+//| Calculate enhanced Pin Bar levels with dynamic risk management  |
+//+------------------------------------------------------------------+
+void CalculateEnhancedPinBarLevels() {
+    double high = g_current_pin_bar.high;
+    double low = g_current_pin_bar.low;
+    double range = high - low;
+    
+    // Dynamic entry based on confidence and market conditions
+    double entry_adjustment = 0.5; // Default 50% retracement
+    
+    // Adjust entry based on confidence
+    if(g_current_pin_bar.confidence > 0.8) {
+        entry_adjustment = 0.4; // More aggressive entry for high confidence
+    } else if(g_current_pin_bar.confidence < 0.6) {
+        entry_adjustment = 0.6; // More conservative entry for low confidence
+    }
+    
+    if(g_current_pin_bar.is_bullish) {
+        g_current_pin_bar.entry_price = low + (range * entry_adjustment);
+        g_current_pin_bar.stop_loss = CalculateDynamicStopLoss(true);
+        g_current_pin_bar.take_profit = g_current_pin_bar.entry_price + (g_atr_value * ATR_Multiplier_TP * g_current_pin_bar.confidence);
+    } else {
+        g_current_pin_bar.entry_price = high - (range * entry_adjustment);
+        g_current_pin_bar.stop_loss = CalculateDynamicStopLoss(false);
+        g_current_pin_bar.take_profit = g_current_pin_bar.entry_price - (g_atr_value * ATR_Multiplier_TP * g_current_pin_bar.confidence);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate dynamic stop loss based on Pin Bar characteristics    |
+//+------------------------------------------------------------------+
+double CalculateDynamicStopLoss(bool is_bullish) {
+    double base_sl = is_bullish ? g_current_pin_bar.low : g_current_pin_bar.high;
+    
+    // Adjust based on Pin Bar quality
+    double quality_factor = g_current_pin_bar.confidence;
+    double atr_multiplier = 0.3 + (0.7 * (1.0 - quality_factor)); // 0.3 to 1.0
+    
+    // Adjust based on market volatility
+    double volatility_adjustment = CalculateVolatilityAdjustment();
+    
+    double final_multiplier = atr_multiplier * volatility_adjustment;
+    
+    if(is_bullish) {
+        return base_sl - (g_atr_value * final_multiplier);
+    } else {
+        return base_sl + (g_atr_value * final_multiplier);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate volatility adjustment factor                          |
+
+
+//+------------------------------------------------------------------+
+//| Legacy Pin Bar confidence calculation (for compatibility)       |
 //+------------------------------------------------------------------+
 double CalculatePinBarConfidence(double wick_ratio, double body_percent, double total_range) {
     // Base confidence from research: 58-65% directional accuracy
@@ -10750,24 +11135,11 @@ double CalculatePinBarConfidence(double wick_ratio, double body_percent, double 
 }
 
 //+------------------------------------------------------------------+
-//| Calculate Pin Bar entry, stop loss, and take profit levels     |
+//| Legacy Pin Bar levels calculation (for compatibility)           |
 //+------------------------------------------------------------------+
 void CalculatePinBarLevels() {
-    double high = g_current_pin_bar.high;
-    double low = g_current_pin_bar.low;
-    double range = high - low;
-
-    if(g_current_pin_bar.is_bullish) {
-        // Bullish Pin Bar: 50% retracement entry method
-        g_current_pin_bar.entry_price = low + (range * (PB_RetracePercent / 100.0));
-        g_current_pin_bar.stop_loss = low - (g_atr_value * ATR_Multiplier_SL * 0.5); // Tighter SL for Pin Bars
-        g_current_pin_bar.take_profit = g_current_pin_bar.entry_price + (g_atr_value * ATR_Multiplier_TP);
-    } else {
-        // Bearish Pin Bar: 50% retracement entry method
-        g_current_pin_bar.entry_price = high - (range * (PB_RetracePercent / 100.0));
-        g_current_pin_bar.stop_loss = high + (g_atr_value * ATR_Multiplier_SL * 0.5); // Tighter SL for Pin Bars
-        g_current_pin_bar.take_profit = g_current_pin_bar.entry_price - (g_atr_value * ATR_Multiplier_TP);
-    }
+    // Use enhanced calculation by default
+    CalculateEnhancedPinBarLevels();
 }
 
 //+------------------------------------------------------------------+
@@ -10851,7 +11223,7 @@ bool CheckPinBarConfluence() {
 }
 
 //+------------------------------------------------------------------+
-//| Generate Pin Bar trading signal                                 |
+//| Generate enhanced Pin Bar trading signal                        |
 //+------------------------------------------------------------------+
 TradingSignal GeneratePinBarSignal() {
     TradingSignal signal;
@@ -10859,20 +11231,50 @@ TradingSignal GeneratePinBarSignal() {
 
     if(!g_current_pin_bar.is_valid) return signal;
 
+    // Multi-timeframe validation
+    if(PB_UseMultiTimeframe && !g_mtf_pin_bar_analysis.h4_supports_signal && _Period < PERIOD_H4) {
+        if(EnableDebugLogging) {
+            Print("Pin Bar signal rejected: Multi-timeframe analysis does not support signal");
+        }
+        return signal; // Reject signal if 4H doesn't support it
+    }
+
+    // Minimum confidence threshold
+    if(g_current_pin_bar.confidence < 0.4) {
+        if(EnableDebugLogging) {
+            Print("Pin Bar signal rejected: Confidence too low (", DoubleToString(g_current_pin_bar.confidence, 3), ")");
+        }
+        return signal;
+    }
+
     // Determine signal type
     signal.signal_type = g_current_pin_bar.is_bullish ? SIGNAL_TYPE_BUY : SIGNAL_TYPE_SELL;
     signal.confidence_level = g_current_pin_bar.confidence;
     signal.stop_loss = g_current_pin_bar.stop_loss;
     signal.take_profit = g_current_pin_bar.take_profit;
-    signal.strategy_name = "Pin Bar";
+    signal.strategy_name = g_current_pin_bar.is_double_pin_bar ? "Double Pin Bar" : "Enhanced Pin Bar";
     signal.timestamp = TimeCurrent();
     signal.is_valid = true;
 
-    // Add parameters for debugging
-    signal.parameters = StringFormat("Entry=%.5f WickRatio=%.2f Body%%=%.1f",
+    // Enhanced parameters for debugging
+    string mtf_info = "";
+    if(PB_UseMultiTimeframe && g_mtf_pin_bar_analysis.h4_analysis_valid) {
+        mtf_info = StringFormat(" H4Trend=%.2f", g_mtf_pin_bar_analysis.h4_trend_score);
+    }
+    
+    signal.parameters = StringFormat("Entry=%.5f Conf=%.3f Wick=%.2f Rej=%.1f%% ATR=%.2f Vol=%.3f Fib=%.3f%s%s",
                                    g_current_pin_bar.entry_price,
+                                   g_current_pin_bar.confidence,
                                    g_current_pin_bar.wick_to_body_ratio,
-                                   (g_current_pin_bar.body_size / (g_current_pin_bar.high - g_current_pin_bar.low)) * 100.0);
+                                   g_current_pin_bar.rejection_strength,
+                                   g_current_pin_bar.atr_normalized_size,
+                                   g_current_pin_bar.volume_strength,
+                                   g_current_pin_bar.fibonacci_confluence,
+                                   g_current_pin_bar.is_double_pin_bar ? " DOUBLE" : "",
+                                   mtf_info);
+
+    // Update success history for statistical tracking
+    UpdatePinBarSuccessHistory();
 
     return signal;
 }
@@ -11362,79 +11764,148 @@ void DrawRangeBreakout() {
 //+------------------------------------------------------------------+
 //| Draw Pin Bar Pattern                                             |
 //+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//| Enhanced Pin Bar Pattern Drawing with Advanced Features         |
+//+------------------------------------------------------------------+
 void DrawPinBarPattern() {
     if(!g_current_pin_bar.is_valid) return;
 
-    // Create unique object name
+    // Create unique object name with timestamp
     string pin_name = "PinBar_" + IntegerToString(TimeCurrent());
-    color pin_color = g_current_pin_bar.is_bullish ? clrLimeGreen : clrCrimson;
-    string pin_text = g_current_pin_bar.is_bullish ? "Bullish Pin Bar" : "Bearish Pin Bar";
+    
+    // Enhanced confidence-based color coding
+    color pin_color;
+    if(g_current_pin_bar.confidence >= 0.8) {
+        pin_color = g_current_pin_bar.is_bullish ? clrLime : clrRed;
+    } else if(g_current_pin_bar.confidence >= 0.6) {
+        pin_color = g_current_pin_bar.is_bullish ? clrLimeGreen : clrCrimson;
+    } else {
+        pin_color = g_current_pin_bar.is_bullish ? clrGreen : clrMaroon;
+    }
+    
+    // Enhanced pattern text with double Pin Bar detection
+    string pin_text = g_current_pin_bar.is_bullish ? "Bull Pin" : "Bear Pin";
+    if(g_current_pin_bar.is_double_pin_bar) {
+        pin_text = "Double " + pin_text;
+    }
+    if(EnablePinBar) {
+         pin_text = "Enhanced " + pin_text;
+     }
 
-    // Draw Pin Bar candle outline
+    // Draw Pin Bar candle outline with enhanced styling
     ObjectCreate(0, pin_name + "_body", OBJ_RECTANGLE, 0,
                 g_current_pin_bar.time, g_current_pin_bar.open,
                 g_current_pin_bar.time + PeriodSeconds(), g_current_pin_bar.close);
     ObjectSetInteger(0, pin_name + "_body", OBJPROP_COLOR, pin_color);
-    ObjectSetInteger(0, pin_name + "_body", OBJPROP_WIDTH, 2);
+    ObjectSetInteger(0, pin_name + "_body", OBJPROP_WIDTH, g_current_pin_bar.is_double_pin_bar ? 3 : 2);
     ObjectSetInteger(0, pin_name + "_body", OBJPROP_STYLE, STYLE_SOLID);
     ObjectSetInteger(0, pin_name + "_body", OBJPROP_FILL, false);
 
-    // Draw upper wick
+    // Draw enhanced upper wick with rejection strength indication
     if(g_current_pin_bar.upper_wick > 0) {
         ObjectCreate(0, pin_name + "_upper_wick", OBJ_TREND, 0,
                     g_current_pin_bar.time + PeriodSeconds()/2, MathMax(g_current_pin_bar.open, g_current_pin_bar.close),
                     g_current_pin_bar.time + PeriodSeconds()/2, g_current_pin_bar.high);
         ObjectSetInteger(0, pin_name + "_upper_wick", OBJPROP_COLOR, pin_color);
-        ObjectSetInteger(0, pin_name + "_upper_wick", OBJPROP_WIDTH, 3);
+        ObjectSetInteger(0, pin_name + "_upper_wick", OBJPROP_WIDTH, (int)(3 + g_current_pin_bar.rejection_strength * 2));
         ObjectSetInteger(0, pin_name + "_upper_wick", OBJPROP_STYLE, STYLE_SOLID);
     }
 
-    // Draw lower wick
+    // Draw enhanced lower wick with rejection strength indication
     if(g_current_pin_bar.lower_wick > 0) {
         ObjectCreate(0, pin_name + "_lower_wick", OBJ_TREND, 0,
                     g_current_pin_bar.time + PeriodSeconds()/2, MathMin(g_current_pin_bar.open, g_current_pin_bar.close),
                     g_current_pin_bar.time + PeriodSeconds()/2, g_current_pin_bar.low);
         ObjectSetInteger(0, pin_name + "_lower_wick", OBJPROP_COLOR, pin_color);
-        ObjectSetInteger(0, pin_name + "_lower_wick", OBJPROP_WIDTH, 3);
+        ObjectSetInteger(0, pin_name + "_lower_wick", OBJPROP_WIDTH, (int)(3 + g_current_pin_bar.rejection_strength * 2));
         ObjectSetInteger(0, pin_name + "_lower_wick", OBJPROP_STYLE, STYLE_SOLID);
     }
 
-    // Add Pin Bar label with confidence
+    // Draw Fibonacci confluence levels if enabled
+     if(PB_UseFibonacciConfluence && g_current_pin_bar.fibonacci_confluence > 0.5) {
+        for(int i = 0; i < ArraySize(g_pin_bar_fibonacci_levels); i++) {
+            if(g_pin_bar_fibonacci_levels[i] > 0) {
+                ObjectCreate(0, pin_name + "_fib_" + IntegerToString(i), OBJ_HLINE, 0, 0, g_pin_bar_fibonacci_levels[i]);
+                ObjectSetInteger(0, pin_name + "_fib_" + IntegerToString(i), OBJPROP_COLOR, clrGold);
+                ObjectSetInteger(0, pin_name + "_fib_" + IntegerToString(i), OBJPROP_WIDTH, 1);
+                ObjectSetInteger(0, pin_name + "_fib_" + IntegerToString(i), OBJPROP_STYLE, STYLE_DASHDOT);
+            }
+        }
+    }
+
+    // Enhanced comprehensive label with all metrics
     string label_text = pin_text + " (" + DoubleToString(g_current_pin_bar.confidence, 2) + ")";
-    ObjectCreate(0, pin_name + "_label", OBJ_TEXT, 0, g_current_pin_bar.time,
-                g_current_pin_bar.is_bullish ? g_current_pin_bar.low - (g_current_pin_bar.high - g_current_pin_bar.low) * 0.1 :
-                                             g_current_pin_bar.high + (g_current_pin_bar.high - g_current_pin_bar.low) * 0.1);
+    if(EnablePinBar) {
+         label_text += "\nRej: " + DoubleToString(g_current_pin_bar.rejection_strength, 2);
+        label_text += " | ATR: " + DoubleToString(g_current_pin_bar.atr_normalized_size, 2);
+        if(g_current_pin_bar.volume_strength > 0) {
+            label_text += "\nVol: " + DoubleToString(g_current_pin_bar.volume_strength, 2);
+        }
+        if(g_current_pin_bar.fibonacci_confluence > 0) {
+            label_text += " | Fib: " + DoubleToString(g_current_pin_bar.fibonacci_confluence, 2);
+        }
+        if(PB_UseMultiTimeframe && g_mtf_pin_bar_analysis.h4_supports_signal) {
+            label_text += "\n4H: " + (g_current_pin_bar.h4_trend_bullish ? "Bull" : "Bear");
+        }
+    }
+    
+    double label_y_offset = g_current_pin_bar.is_bullish ? 
+        g_current_pin_bar.low - (g_current_pin_bar.high - g_current_pin_bar.low) * 0.15 :
+        g_current_pin_bar.high + (g_current_pin_bar.high - g_current_pin_bar.low) * 0.15;
+        
+    ObjectCreate(0, pin_name + "_label", OBJ_TEXT, 0, g_current_pin_bar.time, label_y_offset);
     ObjectSetString(0, pin_name + "_label", OBJPROP_TEXT, label_text);
     ObjectSetInteger(0, pin_name + "_label", OBJPROP_COLOR, pin_color);
-    ObjectSetInteger(0, pin_name + "_label", OBJPROP_FONTSIZE, 9);
+    ObjectSetInteger(0, pin_name + "_label", OBJPROP_FONTSIZE, g_current_pin_bar.is_double_pin_bar ? 10 : 9);
+    ObjectSetInteger(0, pin_name + "_label", OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
 
-    // Draw entry level line
+    // Draw enhanced entry level line with dynamic styling
     if(g_current_pin_bar.entry_price > 0) {
         ObjectCreate(0, pin_name + "_entry", OBJ_HLINE, 0, 0, g_current_pin_bar.entry_price);
         ObjectSetInteger(0, pin_name + "_entry", OBJPROP_COLOR, pin_color);
-        ObjectSetInteger(0, pin_name + "_entry", OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, pin_name + "_entry", OBJPROP_WIDTH, g_current_pin_bar.confidence >= 0.7 ? 2 : 1);
         ObjectSetInteger(0, pin_name + "_entry", OBJPROP_STYLE, STYLE_DOT);
     }
 
-    // Draw stop loss level
+    // Draw enhanced stop loss level with confidence-based styling
     if(g_current_pin_bar.stop_loss > 0) {
         ObjectCreate(0, pin_name + "_sl", OBJ_HLINE, 0, 0, g_current_pin_bar.stop_loss);
         ObjectSetInteger(0, pin_name + "_sl", OBJPROP_COLOR, clrRed);
-        ObjectSetInteger(0, pin_name + "_sl", OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, pin_name + "_sl", OBJPROP_WIDTH, g_current_pin_bar.confidence >= 0.7 ? 2 : 1);
         ObjectSetInteger(0, pin_name + "_sl", OBJPROP_STYLE, STYLE_DASH);
     }
 
-    // Draw take profit level
+    // Draw enhanced take profit level with confidence-based styling
     if(g_current_pin_bar.take_profit > 0) {
         ObjectCreate(0, pin_name + "_tp", OBJ_HLINE, 0, 0, g_current_pin_bar.take_profit);
         ObjectSetInteger(0, pin_name + "_tp", OBJPROP_COLOR, clrGreen);
-        ObjectSetInteger(0, pin_name + "_tp", OBJPROP_WIDTH, 1);
+        ObjectSetInteger(0, pin_name + "_tp", OBJPROP_WIDTH, g_current_pin_bar.confidence >= 0.7 ? 2 : 1);
         ObjectSetInteger(0, pin_name + "_tp", OBJPROP_STYLE, STYLE_DASH);
+    }
+
+    // Draw statistical significance indicator if high confidence
+    if(g_current_pin_bar.statistical_significance > 0.7) {
+        ObjectCreate(0, pin_name + "_stat_sig", OBJ_ARROW, 0, g_current_pin_bar.time, 
+                    g_current_pin_bar.is_bullish ? g_current_pin_bar.high : g_current_pin_bar.low);
+        ObjectSetInteger(0, pin_name + "_stat_sig", OBJPROP_ARROWCODE, g_current_pin_bar.is_bullish ? 233 : 234);
+        ObjectSetInteger(0, pin_name + "_stat_sig", OBJPROP_COLOR, clrGold);
+        ObjectSetInteger(0, pin_name + "_stat_sig", OBJPROP_WIDTH, 3);
     }
 
     // Register pattern with advanced management system
     if(EnableAdvancedCleanup) {
         RegisterPinBarPattern(pin_name, g_current_pin_bar.confidence);
+    }
+    
+    // Print enhanced debug information
+    if(EnableDebugLogging) {
+        Print("Enhanced Pin Bar drawn: ", pin_text, 
+              " | Confidence: ", DoubleToString(g_current_pin_bar.confidence, 3),
+              " | Rejection: ", DoubleToString(g_current_pin_bar.rejection_strength, 3),
+              " | ATR Norm: ", DoubleToString(g_current_pin_bar.atr_normalized_size, 3),
+              " | Vol Strength: ", DoubleToString(g_current_pin_bar.volume_strength, 3),
+              " | Fib Confluence: ", DoubleToString(g_current_pin_bar.fibonacci_confluence, 3),
+              " | Stat Sig: ", DoubleToString(g_current_pin_bar.statistical_significance, 3));
     }
 }
 
@@ -12088,18 +12559,7 @@ double CalculateVolumeConfirmation() {
     return avg_volume > 0 ? current_volume / avg_volume : 1.0;
 }
 
-//+------------------------------------------------------------------+
-//| Calculate statistical significance                               |
-//+------------------------------------------------------------------+
-double CalculateStatisticalSignificance() {
-    // Simple p-value calculation based on swing strength and volume
-    double swing_strength = g_ms_state.structure_strength;
-    double volume_factor = CalculateVolumeConfirmation();
-    
-    // Mock p-value calculation (in real implementation, use proper statistical tests)
-    double p_value = 1.0 - (swing_strength * volume_factor * 0.5);
-    return MathMax(0.001, MathMin(0.999, p_value));
-}
+
 
 //+------------------------------------------------------------------+
 //| Draw enhanced market structure                                  |

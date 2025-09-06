@@ -21,7 +21,7 @@
 
 
 
-   now i want you to perform an advanced research on my bot. on those  Pin Bar on how they worked in my bot and then go online in the google scholar to find prove logic, implementantion and advanced features and other  the  Pin Bar more features at the sametime you must find advanced mathematical calculation used in the  Pin Bar also you must make the  Pin Bar to perfom analysis in both 4hr chart to find good entry in small time frame.
+   now i want you to perform an advanced research on my bot. on those VWAP on how they worked in my bot and then go online in the google scholar to find prove logic, implementantion and advanced features and other  VWAP more features at the sametime you must find advanced mathematical calculation used in the VWAP also you must make the VWAP to perfom analysis in both 4hr chart to find good entry in small time frame.
 
 
     now i want you to perform an advanced research on my bot. on those Chart Pattern on how they worked in my bot and then go online in the google scholar to find prove logic, implementaion, features they have, mathematical calculation , techiniques to use them, logics abd other important documentation. 
