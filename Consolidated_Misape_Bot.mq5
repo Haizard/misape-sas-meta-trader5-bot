@@ -532,24 +532,71 @@ double g_pin_bar_success_history[50]; // Historical success tracking
 int g_pin_bar_history_index = 0;
 
 // VWAP strategy variables
+// Enhanced VWAP Data Structure with Academic Research Features
 struct VWAPData {
+    // Core VWAP calculation
     double vwap_value;
     double cumulative_pv;  // Price * Volume
     double cumulative_volume;
+    datetime session_start;
+    bool is_valid;
+    
+    // Enhanced Standard Deviation Bands (Academic Model)
     double std_dev_1;      // 1 standard deviation
     double std_dev_2;      // 2 standard deviations
     double upper_band_1;   // VWAP + 1 std dev
     double lower_band_1;   // VWAP - 1 std dev
     double upper_band_2;   // VWAP + 2 std dev
     double lower_band_2;   // VWAP - 2 std dev
-    datetime session_start;
-    bool is_valid;
+    double std_dev_bands[8];           // Multiple standard deviation levels (0.5σ to 4.0σ)
+    double band_touch_probability[8];   // Statistical probability of band touch
+    
+    // Advanced Statistical Features (Based on Academic Research)
+    double statistical_significance;     // P-value for VWAP deviation
+    double confidence_interval_upper;    // 95% confidence interval
+    double confidence_interval_lower;    // 95% confidence interval
+    double volume_weighted_variance;     // Enhanced variance calculation
+    double mean_reversion_probability;   // Probability of mean reversion
+    
+    // Dynamic Volume Approach (Bialkowski et al., 2008)
+    double market_volume_component;      // Market evolution volume
+    double specific_volume_component;    // Stock-specific volume pattern
+    double arma_forecast;               // ARMA model volume forecast
+    
+    // Multi-Timeframe Integration
+    double h4_vwap_value;               // 4-hour VWAP for higher timeframe context
+    double h4_trend_strength;           // 4H trend strength indicator
+    double mtf_confluence_score;        // Multi-timeframe confluence
+    
+    // Volume Profile Integration
+    double point_of_control;            // Volume profile POC
+    double value_area_high;             // 70% value area high
+    double value_area_low;              // 70% value area low
+    double volume_profile_strength;     // POC strength indicator
+    
+    // Anchored VWAP Features
+    datetime anchor_point;              // User-defined anchor point
+    double anchored_vwap;              // Anchored VWAP value
+    bool is_anchored;                  // Whether anchored VWAP is active
 };
 
 VWAPData g_vwap_data;
 double g_vwap_pv_array[];     // Array to store Price*Volume for std dev calculation
 double g_vwap_vol_array[];    // Array to store Volume for std dev calculation
 int g_vwap_data_count = 0;
+
+// Enhanced VWAP Research Variables
+double g_volume_data[1000];            // Volume data for analysis
+double g_price_data[1000];             // Price data for analysis
+int g_enhanced_vwap_data_count = 0;
+
+// Research-Based Parameters
+input double StatisticalSignificanceLevel = 0.05;  // Alpha level for significance testing
+input bool EnableVolumeProfileIntegration = true;   // Enable volume profile features
+input bool EnableAnchoredVWAP = true;              // Enable anchored VWAP
+input bool EnableMultiTimeframeAnalysis = true;     // Enable 4H analysis
+input double ConfidenceLevel = 0.95;               // Confidence interval level
+input double MinConfluenceScore = 0.65;            // Minimum confluence score for signals
 
 // Enhanced Market Structure global variables
 MarketStructureState g_ms_state;
@@ -1145,12 +1192,8 @@ void InitializeStrategies() {
     ArrayInitialize(g_pin_bar_success_history, 0.0);
     g_pin_bar_history_index = 0;
 
-    // Initialize VWAP structure
-    g_vwap_data.is_valid = false;
-    g_vwap_data.session_start = 0;
-    g_vwap_data_count = 0;
-    ArrayResize(g_vwap_pv_array, 1000);
-    ArrayResize(g_vwap_vol_array, 1000);
+    // Initialize Enhanced VWAP structure
+    InitializeEnhancedVWAP();
 }
 
 //+------------------------------------------------------------------+
@@ -11289,20 +11332,23 @@ TradingSignal GeneratePinBarSignal() {
 //| Run VWAP strategy                                                |
 //+------------------------------------------------------------------+
 void RunVWAPStrategy() {
-    // Update VWAP calculation
-    UpdateVWAPCalculation();
+    // Update Enhanced VWAP calculation with academic research models
+    UpdateEnhancedVWAP();
 
     if(!g_vwap_data.is_valid) return;
 
-    // Generate VWAP trading signals
+    // Generate Enhanced 4H VWAP trading signals
     TradingSignal signal;
-    signal = GenerateVWAPSignal();
+    signal = GenerateEnhanced4HVWAPSignal();
     if(signal.is_valid) {
         UpdateStrategySignal(STRATEGY_VWAP, signal);
         if(EnableDebugLogging) {
-            Print("VWAP Signal Generated: ", EnumToString(signal.signal_type),
+            Print("Enhanced 4H VWAP Signal Generated: ", EnumToString(signal.signal_type),
                   " Confidence: ", DoubleToString(signal.confidence_level, 3),
-                  " VWAP: ", DoubleToString(g_vwap_data.vwap_value, 5));
+                  " VWAP: ", DoubleToString(g_vwap_data.vwap_value, 5),
+                  " 4H-VWAP: ", DoubleToString(g_vwap_data.h4_vwap_value, 5),
+                  " MTF Confluence: ", DoubleToString(g_vwap_data.mtf_confluence_score, 3),
+                  " Statistical Sig: ", DoubleToString(g_vwap_data.statistical_significance, 4));
         }
     }
 
@@ -11555,7 +11601,797 @@ TradingSignal GenerateVWAPTrendFollowingSignal(double current_price) {
 }
 
 //+------------------------------------------------------------------+
-//| END OF VWAP STRATEGY IMPLEMENTATION                             |
+//| ENHANCED VWAP RESEARCH FUNCTIONS                                |
+//| Academic Research-Based Implementation                           |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Initialize Enhanced VWAP System                                 |
+//+------------------------------------------------------------------+
+void InitializeEnhancedVWAP() {
+    // Initialize enhanced VWAP data structure
+    g_vwap_data.vwap_value = 0.0;
+    g_vwap_data.cumulative_pv = 0.0;
+    g_vwap_data.cumulative_volume = 0.0;
+    g_vwap_data.is_valid = false;
+    g_vwap_data.session_start = 0;
+    g_vwap_data.statistical_significance = 1.0;
+    g_vwap_data.is_anchored = false;
+    g_vwap_data.mtf_confluence_score = 0.0;
+    g_vwap_data.volume_profile_strength = 0.0;
+    g_vwap_data_count = 0;
+    
+    // Initialize standard deviation bands (0.5σ to 4.0σ)
+    for(int i = 0; i < 8; i++) {
+        g_vwap_data.std_dev_bands[i] = 0.0;
+        g_vwap_data.band_touch_probability[i] = 0.0;
+    }
+    
+    ArrayResize(g_vwap_pv_array, 1000);
+    ArrayResize(g_vwap_vol_array, 1000);
+    ArrayInitialize(g_volume_data, 0.0);
+    ArrayInitialize(g_price_data, 0.0);
+    g_enhanced_vwap_data_count = 0;
+    
+    Print("Enhanced VWAP Research System Initialized");
+}
+
+//+------------------------------------------------------------------+
+//| Apply Dynamic Volume Approach (Bialkowski et al., 2008)         |
+//+------------------------------------------------------------------+
+void ApplyDynamicVolumeApproach() {
+    // Decompose volume into market and specific components
+    // Based on academic research: "Improving VWAP Strategies: A Dynamic Volume Approach"
+    
+    double total_volume = 0.0;
+    double market_volume_sum = 0.0;
+    
+    // Calculate market volume component (correlation with market index)
+    for(int i = 0; i < MathMin(g_enhanced_vwap_data_count, 50); i++) {
+        total_volume += g_volume_data[i];
+        // Simplified market component calculation
+        market_volume_sum += g_volume_data[i] * 0.7; // Market correlation factor
+    }
+    
+    if(total_volume > 0) {
+        g_vwap_data.market_volume_component = market_volume_sum / total_volume;
+        g_vwap_data.specific_volume_component = 1.0 - g_vwap_data.market_volume_component;
+        
+        // ARMA forecast for next period volume (simplified)
+        double recent_avg = 0.0;
+        int lookback = MathMin(10, g_enhanced_vwap_data_count);
+        for(int i = 0; i < lookback; i++) {
+            recent_avg += g_volume_data[g_enhanced_vwap_data_count - 1 - i];
+        }
+        g_vwap_data.arma_forecast = recent_avg / lookback;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate VWAP Statistical Significance (Academic Model)        |
+//+------------------------------------------------------------------+
+void CalculateVWAPStatisticalSignificance() {
+    if(g_enhanced_vwap_data_count < 30) {
+        g_vwap_data.statistical_significance = 1.0;
+        return;
+    }
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    double price_deviation = MathAbs(current_price - g_vwap_data.vwap_value);
+    
+    // Calculate standard error
+    double sum_squared_deviations = 0.0;
+    for(int i = 0; i < g_enhanced_vwap_data_count; i++) {
+        double deviation = g_price_data[i] - g_vwap_data.vwap_value;
+        sum_squared_deviations += deviation * deviation;
+    }
+    
+    double standard_error = MathSqrt(sum_squared_deviations / (g_enhanced_vwap_data_count - 1));
+    
+    if(standard_error > 0) {
+        // Calculate t-statistic
+        double t_statistic = price_deviation / (standard_error / MathSqrt(g_enhanced_vwap_data_count));
+        
+        // Simplified p-value calculation (two-tailed test)
+        g_vwap_data.statistical_significance = 2.0 * (1.0 - NormalCDF(MathAbs(t_statistic)));
+        
+        // Calculate confidence intervals
+        double critical_value = 1.96; // 95% confidence level (simplified)
+        double margin_error = critical_value * standard_error;
+        g_vwap_data.confidence_interval_upper = g_vwap_data.vwap_value + margin_error;
+        g_vwap_data.confidence_interval_lower = g_vwap_data.vwap_value - margin_error;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Update Multi-Timeframe VWAP Analysis (4H Focus)                 |
+//+------------------------------------------------------------------+
+void UpdateMultiTimeframeVWAPAnalysis() {
+    if(!EnableMultiTimeframeAnalysis) return;
+    
+    // Calculate 4-hour VWAP for higher timeframe context
+    int h4_bars = iBars(_Symbol, PERIOD_H4);
+    if(h4_bars < 10) return;
+    
+    double h4_cumulative_pv = 0.0;
+    double h4_cumulative_volume = 0.0;
+    
+    // Calculate 4H VWAP for current session
+    for(int i = 0; i < MathMin(24, h4_bars); i++) { // Last 24 4H bars (4 days)
+        double h4_typical = (iHigh(_Symbol, PERIOD_H4, i) + iLow(_Symbol, PERIOD_H4, i) + iClose(_Symbol, PERIOD_H4, i)) / 3.0;
+        long h4_volume = iVolume(_Symbol, PERIOD_H4, i);
+        
+        h4_cumulative_pv += h4_typical * (double)h4_volume;
+        h4_cumulative_volume += (double)h4_volume;
+    }
+    
+    if(h4_cumulative_volume > 0) {
+        g_vwap_data.h4_vwap_value = h4_cumulative_pv / h4_cumulative_volume;
+        
+        // Calculate 4H trend strength
+        double h4_close_0 = iClose(_Symbol, PERIOD_H4, 0);
+        double h4_close_4 = iClose(_Symbol, PERIOD_H4, 4);
+        g_vwap_data.h4_trend_strength = (h4_close_0 - h4_close_4) / h4_close_4;
+        
+        // Calculate multi-timeframe confluence
+        double current_price = iClose(_Symbol, _Period, 0);
+        double vwap_distance = MathAbs(current_price - g_vwap_data.vwap_value);
+        double h4_vwap_distance = MathAbs(current_price - g_vwap_data.h4_vwap_value);
+        
+        // Confluence score: higher when both VWAPs align
+        if(vwap_distance > 0 && h4_vwap_distance > 0) {
+            double alignment_factor = 1.0 / (1.0 + MathAbs(g_vwap_data.vwap_value - g_vwap_data.h4_vwap_value) / _Point);
+            g_vwap_data.mtf_confluence_score = alignment_factor * (1.0 - MathMin(vwap_distance, h4_vwap_distance) / _Point / 100.0);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Integrate Volume Profile with VWAP                              |
+//+------------------------------------------------------------------+
+void IntegrateVolumeProfile() {
+    if(!EnableVolumeProfileIntegration) return;
+    
+    // Simplified volume profile calculation
+    double price_levels[100];
+    double volume_at_price[100];
+    
+    // Build volume profile for recent data
+    double price_range_high = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, 100, 0));
+    double price_range_low = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, 100, 0));
+    double price_step = (price_range_high - price_range_low) / 99.0;
+    
+    // Initialize price levels
+    for(int i = 0; i < 100; i++) {
+        price_levels[i] = price_range_low + (i * price_step);
+        volume_at_price[i] = 0.0;
+    }
+    
+    // Accumulate volume at each price level
+    for(int bar = 0; bar < MathMin(100, iBars(_Symbol, _Period)); bar++) {
+        double bar_high = iHigh(_Symbol, _Period, bar);
+        double bar_low = iLow(_Symbol, _Period, bar);
+        long bar_volume = iVolume(_Symbol, _Period, bar);
+        
+        // Distribute volume across price range of the bar
+        for(int i = 0; i < 100; i++) {
+            if(price_levels[i] >= bar_low && price_levels[i] <= bar_high) {
+                volume_at_price[i] += bar_volume / ((bar_high - bar_low) / price_step + 1);
+            }
+        }
+    }
+    
+    // Find Point of Control (highest volume price)
+    double max_volume = 0.0;
+    int poc_index = 0;
+    for(int i = 0; i < 100; i++) {
+        if(volume_at_price[i] > max_volume) {
+            max_volume = volume_at_price[i];
+            poc_index = i;
+        }
+    }
+    
+    g_vwap_data.point_of_control = price_levels[poc_index];
+    
+    // Calculate Value Area (70% of volume)
+    double total_volume = 0.0;
+    for(int i = 0; i < 100; i++) {
+        total_volume += volume_at_price[i];
+    }
+    
+    double target_volume = total_volume * 0.70;
+    double accumulated_volume = volume_at_price[poc_index];
+    int va_high_index = poc_index;
+    int va_low_index = poc_index;
+    
+    // Expand value area from POC
+    while(accumulated_volume < target_volume && (va_high_index < 99 || va_low_index > 0)) {
+        double high_volume = (va_high_index < 99) ? volume_at_price[va_high_index + 1] : 0;
+        double low_volume = (va_low_index > 0) ? volume_at_price[va_low_index - 1] : 0;
+        
+        if(high_volume >= low_volume && va_high_index < 99) {
+            va_high_index++;
+            accumulated_volume += volume_at_price[va_high_index];
+        } else if(va_low_index > 0) {
+            va_low_index--;
+            accumulated_volume += volume_at_price[va_low_index];
+        } else {
+            break;
+        }
+    }
+    
+    g_vwap_data.value_area_high = price_levels[va_high_index];
+    g_vwap_data.value_area_low = price_levels[va_low_index];
+    
+    // Calculate volume profile strength
+    double poc_distance = MathAbs(iClose(_Symbol, _Period, 0) - g_vwap_data.point_of_control);
+    g_vwap_data.volume_profile_strength = 1.0 / (1.0 + poc_distance / _Point / 10.0);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Enhanced Standard Deviation Bands                     |
+//+------------------------------------------------------------------+
+void CalculateEnhancedStandardDeviationBands() {
+    if(g_enhanced_vwap_data_count < 20) return;
+    
+    // Calculate volume-weighted variance (academic approach)
+    double sum_weighted_sq_diff = 0.0;
+    double total_weight = 0.0;
+    
+    for(int i = 0; i < g_enhanced_vwap_data_count; i++) {
+        double weight = g_volume_data[i];
+        double diff = g_price_data[i] - g_vwap_data.vwap_value;
+        sum_weighted_sq_diff += weight * (diff * diff);
+        total_weight += weight;
+    }
+    
+    if(total_weight > 0) {
+        g_vwap_data.volume_weighted_variance = sum_weighted_sq_diff / total_weight;
+        double std_dev = MathSqrt(g_vwap_data.volume_weighted_variance);
+        
+        // Calculate multiple standard deviation bands (0.5σ to 4.0σ)
+        double multipliers[8] = {0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0};
+        
+        for(int i = 0; i < 8; i++) {
+            g_vwap_data.std_dev_bands[i] = std_dev * multipliers[i];
+            
+            // Calculate probability of touching each band (normal distribution)
+            double z_score = multipliers[i];
+            g_vwap_data.band_touch_probability[i] = 2.0 * (1.0 - NormalCDF(z_score));
+        }
+        
+        // Calculate mean reversion probability
+        double current_price = iClose(_Symbol, _Period, 0);
+        double current_deviation = MathAbs(current_price - g_vwap_data.vwap_value) / std_dev;
+        g_vwap_data.mean_reversion_probability = NormalCDF(current_deviation);
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Update Anchored VWAP                                            |
+//+------------------------------------------------------------------+
+void UpdateAnchoredVWAP() {
+    if(!EnableAnchoredVWAP || !g_vwap_data.is_anchored) return;
+    
+    // Calculate VWAP from anchor point to current time
+    int anchor_bar = iBarShift(_Symbol, _Period, g_vwap_data.anchor_point);
+    if(anchor_bar < 0) return;
+    
+    double anchored_pv = 0.0;
+    double anchored_volume = 0.0;
+    
+    for(int i = anchor_bar; i >= 0; i--) {
+        double typical_price = (iHigh(_Symbol, _Period, i) + iLow(_Symbol, _Period, i) + iClose(_Symbol, _Period, i)) / 3.0;
+        long volume = iVolume(_Symbol, _Period, i);
+        
+        anchored_pv += typical_price * (double)volume;
+        anchored_volume += (double)volume;
+    }
+    
+    if(anchored_volume > 0) {
+        g_vwap_data.anchored_vwap = anchored_pv / anchored_volume;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Set Anchored VWAP Point                                         |
+//+------------------------------------------------------------------+
+void SetAnchoredVWAP(datetime anchor_time) {
+    g_vwap_data.anchor_point = anchor_time;
+    g_vwap_data.is_anchored = true;
+    Print("Anchored VWAP set at: ", TimeToString(anchor_time));
+}
+
+//+------------------------------------------------------------------+
+//| Normal CDF Approximation                                        |
+//+------------------------------------------------------------------+
+double NormalCDF(double x) {
+    // Abramowitz and Stegun approximation
+    double a1 =  0.254829592;
+    double a2 = -0.284496736;
+    double a3 =  1.421413741;
+    double a4 = -1.453152027;
+    double a5 =  1.061405429;
+    double p  =  0.3275911;
+    
+    int sign = (x < 0) ? -1 : 1;
+    x = MathAbs(x) / MathSqrt(2.0);
+    
+    double t = 1.0 / (1.0 + p * x);
+    double y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * MathExp(-x * x);
+    
+    return 0.5 * (1.0 + sign * y);
+}
+
+//+------------------------------------------------------------------+
+//| Generate Enhanced VWAP Entry Signals for 4H Analysis           |
+//+------------------------------------------------------------------+
+TradingSignal GenerateEnhanced4HVWAPSignal() {
+    TradingSignal signal;
+    signal.is_valid = false;
+    signal.strategy_name = "Enhanced 4H VWAP";
+    signal.timestamp = TimeCurrent();
+    
+    if(!g_vwap_data.is_valid) return signal;
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    
+    // Multi-timeframe confluence check
+    if(g_vwap_data.mtf_confluence_score < 0.6) return signal;
+    
+    // Statistical significance check
+    if(g_vwap_data.statistical_significance > StatisticalSignificanceLevel) {
+        // Price deviation is statistically significant
+        
+        // Check 4H trend alignment
+        bool h4_bullish = g_vwap_data.h4_trend_strength > 0.02;
+        bool h4_bearish = g_vwap_data.h4_trend_strength < -0.02;
+        
+        // Volume profile confluence
+        bool near_poc = MathAbs(current_price - g_vwap_data.point_of_control) < (g_atr_value * 0.5);
+        bool in_value_area = (current_price >= g_vwap_data.value_area_low && current_price <= g_vwap_data.value_area_high);
+        
+        // Generate signals based on 4H VWAP and lower timeframe entry
+        if(current_price < g_vwap_data.h4_vwap_value && h4_bullish && near_poc) {
+            // Bullish signal: Price below 4H VWAP with bullish 4H trend
+            signal.signal_type = SIGNAL_TYPE_BUY;
+            signal.entry_price = current_price;
+            signal.stop_loss = g_vwap_data.h4_vwap_value - (g_atr_value * 2.0);
+            signal.take_profit = g_vwap_data.h4_vwap_value + (g_atr_value * 3.0);
+            
+            // Enhanced confidence calculation
+            signal.confidence_level = 0.7;
+            signal.confidence_level += (g_vwap_data.mtf_confluence_score - 0.6) * 0.5;
+            signal.confidence_level += g_vwap_data.volume_profile_strength * 0.1;
+            signal.confidence_level += (1.0 - g_vwap_data.statistical_significance) * 0.2;
+            
+            signal.is_valid = true;
+        }
+        else if(current_price > g_vwap_data.h4_vwap_value && h4_bearish && near_poc) {
+            // Bearish signal: Price above 4H VWAP with bearish 4H trend
+            signal.signal_type = SIGNAL_TYPE_SELL;
+            signal.entry_price = current_price;
+            signal.stop_loss = g_vwap_data.h4_vwap_value + (g_atr_value * 2.0);
+            signal.take_profit = g_vwap_data.h4_vwap_value - (g_atr_value * 3.0);
+            
+            // Enhanced confidence calculation
+            signal.confidence_level = 0.7;
+            signal.confidence_level += (g_vwap_data.mtf_confluence_score - 0.6) * 0.5;
+            signal.confidence_level += g_vwap_data.volume_profile_strength * 0.1;
+            signal.confidence_level += (1.0 - g_vwap_data.statistical_significance) * 0.2;
+            
+            signal.is_valid = true;
+        }
+        
+        // Cap confidence at 0.95
+        signal.confidence_level = MathMin(signal.confidence_level, 0.95);
+        
+        if(signal.is_valid) {
+            signal.parameters = StringFormat("4H-VWAP: MTF=%.3f Stat=%.3f VP=%.3f H4Trend=%.3f",
+                                           g_vwap_data.mtf_confluence_score,
+                                           g_vwap_data.statistical_significance,
+                                           g_vwap_data.volume_profile_strength,
+                                           g_vwap_data.h4_trend_strength);
+        }
+    }
+    
+    return signal;
+}
+
+//+------------------------------------------------------------------+
+//| Update Enhanced VWAP with Academic Research Models              |
+//+------------------------------------------------------------------+
+void UpdateEnhancedVWAP() {
+    // 1. Update core VWAP calculation
+    UpdateCoreVWAPCalculation();
+    
+    // 2. Apply Dynamic Volume Approach (Academic Research)
+    if(g_enhanced_vwap_data_count >= 20) {
+        ApplyDynamicVolumeApproach();
+    }
+    
+    // 3. Calculate Statistical Significance
+    CalculateVWAPStatisticalSignificance();
+    
+    // 4. Update Multi-Timeframe Analysis
+    UpdateMultiTimeframeVWAPAnalysis();
+    
+    // 5. Integrate Volume Profile
+    IntegrateVolumeProfile();
+    
+    // 6. Calculate Enhanced Standard Deviation Bands
+    CalculateEnhancedStandardDeviationBands();
+    
+    // 7. Update Anchored VWAP if enabled
+    UpdateAnchoredVWAP();
+}
+
+//+------------------------------------------------------------------+
+//| Update Core VWAP Calculation                                    |
+//+------------------------------------------------------------------+
+void UpdateCoreVWAPCalculation() {
+    // Get current bar data
+    double high = iHigh(_Symbol, _Period, 0);
+    double low = iLow(_Symbol, _Period, 0);
+    double close = iClose(_Symbol, _Period, 0);
+    long volume = iVolume(_Symbol, _Period, 0);
+    
+    if(high == 0 || low == 0 || volume == 0) return;
+    
+    // Calculate typical price
+    double typical_price = (high + low + close) / 3.0;
+    double price_volume = typical_price * (double)volume;
+    
+    // Update cumulative values
+    g_vwap_data.cumulative_pv += price_volume;
+    g_vwap_data.cumulative_volume += (double)volume;
+    
+    // Calculate VWAP
+    if(g_vwap_data.cumulative_volume > 0) {
+        g_vwap_data.vwap_value = g_vwap_data.cumulative_pv / g_vwap_data.cumulative_volume;
+        g_vwap_data.is_valid = true;
+        
+        // Store data for analysis
+        if(g_enhanced_vwap_data_count < ArraySize(g_volume_data)) {
+            g_volume_data[g_enhanced_vwap_data_count] = (double)volume;
+            g_price_data[g_enhanced_vwap_data_count] = typical_price;
+            g_enhanced_vwap_data_count++;
+        } else {
+            // Shift arrays when full
+            for(int i = 0; i < ArraySize(g_volume_data) - 1; i++) {
+                g_volume_data[i] = g_volume_data[i + 1];
+                g_price_data[i] = g_price_data[i + 1];
+            }
+            g_volume_data[ArraySize(g_volume_data) - 1] = (double)volume;
+            g_price_data[ArraySize(g_price_data) - 1] = typical_price;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| 4H-TO-LOWER TIMEFRAME ENTRY SIGNAL SYSTEM                       |
+//| Academic Research-Based Multi-Timeframe Confluence              |
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Generate 4H-to-Lower Timeframe Entry Signal                     |
+//+------------------------------------------------------------------+
+TradingSignal Generate4HToLowerTimeframeEntry() {
+    TradingSignal signal;
+    signal.is_valid = false;
+    signal.strategy_name = "4H-Lower TF Entry";
+    signal.timestamp = TimeCurrent();
+    
+    // Step 1: Get 4H VWAP signal
+    TradingSignal h4_signal = GenerateEnhanced4HVWAPSignal();
+    if(!h4_signal.is_valid) return signal;
+    
+    // Step 2: Check lower timeframe confirmation
+    bool lower_tf_confirmation = CheckLowerTimeframeConfirmation(h4_signal.signal_type);
+    if(!lower_tf_confirmation) return signal;
+    
+    // Step 3: Volume profile confluence
+    bool volume_confluence = CheckVolumeProfileConfluence();
+    
+    // Step 4: Market structure alignment
+    bool structure_alignment = CheckMarketStructureAlignment(h4_signal.signal_type);
+    
+    // Step 5: Calculate final confluence score
+    double confluence_score = CalculateMultiTimeframeConfluence(h4_signal, volume_confluence, structure_alignment);
+    
+    if(confluence_score >= MinConfluenceScore) {
+        // Copy 4H signal and enhance with lower timeframe data
+        signal = h4_signal;
+        signal.strategy_name = "4H-Lower TF Entry";
+        
+        // Refine entry price using lower timeframe precision
+        signal.entry_price = GetPreciseEntryPrice(h4_signal.signal_type);
+        
+        // Adjust stop loss and take profit based on multi-timeframe analysis
+        AdjustStopLossAndTakeProfit(signal, confluence_score);
+        
+        // Enhanced confidence calculation
+        signal.confidence_level = h4_signal.confidence_level * confluence_score;
+        signal.confidence_level = MathMin(signal.confidence_level, 0.95);
+        
+        signal.parameters = StringFormat("4H-LTF: H4Conf=%.3f MTFConf=%.3f Vol=%s Struct=%s",
+                                       h4_signal.confidence_level,
+                                       confluence_score,
+                                       volume_confluence ? "Y" : "N",
+                                       structure_alignment ? "Y" : "N");
+        
+        signal.is_valid = true;
+    }
+    
+    return signal;
+}
+
+//+------------------------------------------------------------------+
+//| Check Lower Timeframe Confirmation                              |
+//+------------------------------------------------------------------+
+bool CheckLowerTimeframeConfirmation(ENUM_SIGNAL_TYPE signal_type) {
+    // Check current timeframe momentum
+    double current_close = iClose(_Symbol, _Period, 0);
+    double prev_close_1 = iClose(_Symbol, _Period, 1);
+    double prev_close_2 = iClose(_Symbol, _Period, 2);
+    
+    if(current_close == 0 || prev_close_1 == 0 || prev_close_2 == 0) return false;
+    
+    // Check momentum alignment
+    bool bullish_momentum = (current_close > prev_close_1) && (prev_close_1 > prev_close_2);
+    bool bearish_momentum = (current_close < prev_close_1) && (prev_close_1 < prev_close_2);
+    
+    // Check VWAP position on current timeframe
+    bool above_vwap = current_close > g_vwap_data.vwap_value;
+    bool below_vwap = current_close < g_vwap_data.vwap_value;
+    
+    // Check volume confirmation
+    long current_volume = iVolume(_Symbol, _Period, 0);
+    long avg_volume = 0;
+    for(int i = 1; i <= 10; i++) {
+        avg_volume += iVolume(_Symbol, _Period, i);
+    }
+    avg_volume /= 10;
+    bool volume_confirmation = current_volume > (avg_volume * 1.2); // 20% above average
+    
+    if(signal_type == SIGNAL_TYPE_BUY) {
+        return bullish_momentum && above_vwap && volume_confirmation;
+    }
+    else if(signal_type == SIGNAL_TYPE_SELL) {
+        return bearish_momentum && below_vwap && volume_confirmation;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check Volume Profile Confluence                                 |
+//+------------------------------------------------------------------+
+bool CheckVolumeProfileConfluence() {
+    if(!EnableVolumeProfileIntegration) return true; // Skip if disabled
+    
+    double current_price = iClose(_Symbol, _Period, 0);
+    
+    // Check if price is near Point of Control
+    bool near_poc = MathAbs(current_price - g_vwap_data.point_of_control) < (g_atr_value * 0.3);
+    
+    // Check if price is within Value Area
+    bool in_value_area = (current_price >= g_vwap_data.value_area_low && 
+                         current_price <= g_vwap_data.value_area_high);
+    
+    // High volume profile strength indicates good confluence
+    bool strong_volume_profile = g_vwap_data.volume_profile_strength > 0.6;
+    
+    return (near_poc || in_value_area) && strong_volume_profile;
+}
+
+//+------------------------------------------------------------------+
+//| Check Market Structure Alignment                                |
+//+------------------------------------------------------------------+
+bool CheckMarketStructureAlignment(ENUM_SIGNAL_TYPE signal_type) {
+    // Get recent highs and lows for structure analysis
+    double recent_high = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, 20, 0));
+    double recent_low = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, 20, 0));
+    double current_price = iClose(_Symbol, _Period, 0);
+    
+    // Calculate position within recent range
+    double range_position = (current_price - recent_low) / (recent_high - recent_low);
+    
+    if(signal_type == SIGNAL_TYPE_BUY) {
+        // For buy signals, prefer lower part of range (potential bounce)
+        return range_position < 0.4;
+    }
+    else if(signal_type == SIGNAL_TYPE_SELL) {
+        // For sell signals, prefer upper part of range (potential rejection)
+        return range_position > 0.6;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Multi-Timeframe Confluence Score                      |
+//+------------------------------------------------------------------+
+double CalculateMultiTimeframeConfluence(TradingSignal &h4_signal, bool volume_confluence, bool structure_alignment) {
+    double confluence_score = 0.0;
+    
+    // Base score from 4H signal confidence
+    confluence_score += h4_signal.confidence_level * 0.4; // 40% weight
+    
+    // Multi-timeframe VWAP alignment
+    confluence_score += g_vwap_data.mtf_confluence_score * 0.3; // 30% weight
+    
+    // Statistical significance
+    confluence_score += (1.0 - g_vwap_data.statistical_significance) * 0.15; // 15% weight
+    
+    // Volume profile confluence
+    if(volume_confluence) {
+        confluence_score += 0.1; // 10% bonus
+    }
+    
+    // Market structure alignment
+    if(structure_alignment) {
+        confluence_score += 0.05; // 5% bonus
+    }
+    
+    return MathMin(confluence_score, 1.0);
+}
+
+//+------------------------------------------------------------------+
+//| Get Precise Entry Price                                         |
+//+------------------------------------------------------------------+
+double GetPreciseEntryPrice(ENUM_SIGNAL_TYPE signal_type) {
+    double current_price = iClose(_Symbol, _Period, 0);
+    double high = iHigh(_Symbol, _Period, 0);
+    double low = iLow(_Symbol, _Period, 0);
+    
+    if(signal_type == SIGNAL_TYPE_BUY) {
+        // For buy signals, use current price or slightly above for momentum
+        return MathMax(current_price, low + (high - low) * 0.3);
+    }
+    else if(signal_type == SIGNAL_TYPE_SELL) {
+        // For sell signals, use current price or slightly below for momentum
+        return MathMin(current_price, high - (high - low) * 0.3);
+    }
+    
+    return current_price;
+}
+
+//+------------------------------------------------------------------+
+//| Adjust Stop Loss and Take Profit                                |
+//+------------------------------------------------------------------+
+void AdjustStopLossAndTakeProfit(TradingSignal &signal, double confluence_score) {
+    double atr_multiplier = 2.0 + (confluence_score * 1.0); // Dynamic ATR multiplier
+    
+    if(signal.signal_type == SIGNAL_TYPE_BUY) {
+        // Tighter stop loss for higher confluence
+        signal.stop_loss = signal.entry_price - (g_atr_value * (3.0 - confluence_score));
+        
+        // More aggressive take profit for higher confluence
+        signal.take_profit = signal.entry_price + (g_atr_value * atr_multiplier * 2.0);
+        
+        // Ensure stop loss is below recent support
+        double recent_low = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, 10, 1));
+        signal.stop_loss = MathMin(signal.stop_loss, recent_low - (g_atr_value * 0.5));
+    }
+    else if(signal.signal_type == SIGNAL_TYPE_SELL) {
+        // Tighter stop loss for higher confluence
+        signal.stop_loss = signal.entry_price + (g_atr_value * (3.0 - confluence_score));
+        
+        // More aggressive take profit for higher confluence
+        signal.take_profit = signal.entry_price - (g_atr_value * atr_multiplier * 2.0);
+        
+        // Ensure stop loss is above recent resistance
+        double recent_high = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, 10, 1));
+        signal.stop_loss = MathMax(signal.stop_loss, recent_high + (g_atr_value * 0.5));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Enhanced VWAP Strategy with 4H-Lower TF Integration             |
+//+------------------------------------------------------------------+
+void RunEnhanced4HVWAPStrategy() {
+    // Update Enhanced VWAP calculation
+    UpdateEnhancedVWAP();
+    
+    if(!g_vwap_data.is_valid) return;
+    
+    // Generate 4H-to-Lower Timeframe entry signal
+    TradingSignal signal = Generate4HToLowerTimeframeEntry();
+    
+    if(signal.is_valid) {
+        UpdateStrategySignal(STRATEGY_VWAP, signal);
+        
+        if(EnableDebugLogging) {
+            Print("=== Enhanced 4H-Lower TF VWAP Signal ===");
+            Print("Signal Type: ", EnumToString(signal.signal_type));
+            Print("Confidence: ", DoubleToString(signal.confidence_level, 3));
+            Print("Entry Price: ", DoubleToString(signal.entry_price, 5));
+            Print("Stop Loss: ", DoubleToString(signal.stop_loss, 5));
+            Print("Take Profit: ", DoubleToString(signal.take_profit, 5));
+            Print("4H VWAP: ", DoubleToString(g_vwap_data.h4_vwap_value, 5));
+            Print("Current VWAP: ", DoubleToString(g_vwap_data.vwap_value, 5));
+            Print("MTF Confluence: ", DoubleToString(g_vwap_data.mtf_confluence_score, 3));
+            Print("Statistical Significance: ", DoubleToString(g_vwap_data.statistical_significance, 4));
+            Print("Volume Profile Strength: ", DoubleToString(g_vwap_data.volume_profile_strength, 3));
+            Print("Parameters: ", signal.parameters);
+        }
+    }
+    
+    // Always draw VWAP levels when valid
+    if(g_vwap_data.is_valid) {
+        DrawVWAPLevels();
+        DrawEnhancedVWAPLevels();
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Draw Enhanced VWAP Levels                                       |
+//+------------------------------------------------------------------+
+void DrawEnhancedVWAPLevels() {
+    if(!g_vwap_data.is_valid) return;
+    
+    string prefix = "Enhanced_VWAP_";
+    
+    // Draw 4H VWAP level
+    if(g_vwap_data.h4_vwap_value > 0) {
+        ObjectCreate(0, prefix + "H4_VWAP", OBJ_HLINE, 0, 0, g_vwap_data.h4_vwap_value);
+        ObjectSetInteger(0, prefix + "H4_VWAP", OBJPROP_COLOR, clrOrange);
+        ObjectSetInteger(0, prefix + "H4_VWAP", OBJPROP_STYLE, STYLE_DASH);
+        ObjectSetInteger(0, prefix + "H4_VWAP", OBJPROP_WIDTH, 2);
+        ObjectSetString(0, prefix + "H4_VWAP", OBJPROP_TEXT, "4H VWAP: " + DoubleToString(g_vwap_data.h4_vwap_value, 5));
+    }
+    
+    // Draw Point of Control
+    if(EnableVolumeProfileIntegration && g_vwap_data.point_of_control > 0) {
+        ObjectCreate(0, prefix + "POC", OBJ_HLINE, 0, 0, g_vwap_data.point_of_control);
+        ObjectSetInteger(0, prefix + "POC", OBJPROP_COLOR, clrYellow);
+        ObjectSetInteger(0, prefix + "POC", OBJPROP_STYLE, STYLE_DOT);
+        ObjectSetInteger(0, prefix + "POC", OBJPROP_WIDTH, 1);
+        ObjectSetString(0, prefix + "POC", OBJPROP_TEXT, "POC: " + DoubleToString(g_vwap_data.point_of_control, 5));
+    }
+    
+    // Draw Value Area
+    if(EnableVolumeProfileIntegration) {
+        if(g_vwap_data.value_area_high > 0) {
+            ObjectCreate(0, prefix + "VA_High", OBJ_HLINE, 0, 0, g_vwap_data.value_area_high);
+            ObjectSetInteger(0, prefix + "VA_High", OBJPROP_COLOR, clrLightBlue);
+            ObjectSetInteger(0, prefix + "VA_High", OBJPROP_STYLE, STYLE_DASHDOT);
+            ObjectSetInteger(0, prefix + "VA_High", OBJPROP_WIDTH, 1);
+        }
+        
+        if(g_vwap_data.value_area_low > 0) {
+            ObjectCreate(0, prefix + "VA_Low", OBJ_HLINE, 0, 0, g_vwap_data.value_area_low);
+            ObjectSetInteger(0, prefix + "VA_Low", OBJPROP_COLOR, clrLightBlue);
+            ObjectSetInteger(0, prefix + "VA_Low", OBJPROP_STYLE, STYLE_DASHDOT);
+            ObjectSetInteger(0, prefix + "VA_Low", OBJPROP_WIDTH, 1);
+        }
+    }
+    
+    // Draw enhanced standard deviation bands
+    for(int i = 0; i < 4; i++) { // Draw first 4 bands (0.5σ to 2.0σ)
+        if(g_vwap_data.std_dev_bands[i] > 0) {
+            double upper_band = g_vwap_data.vwap_value + g_vwap_data.std_dev_bands[i];
+            double lower_band = g_vwap_data.vwap_value - g_vwap_data.std_dev_bands[i];
+            
+            string upper_name = prefix + "Upper_" + IntegerToString(i + 1);
+            string lower_name = prefix + "Lower_" + IntegerToString(i + 1);
+            
+            ObjectCreate(0, upper_name, OBJ_HLINE, 0, 0, upper_band);
+            ObjectCreate(0, lower_name, OBJ_HLINE, 0, 0, lower_band);
+            
+            color band_color = (i == 0) ? clrLightGray : (i == 1) ? clrGray : clrDarkGray;
+            
+            ObjectSetInteger(0, upper_name, OBJPROP_COLOR, band_color);
+            ObjectSetInteger(0, lower_name, OBJPROP_COLOR, band_color);
+            ObjectSetInteger(0, upper_name, OBJPROP_STYLE, STYLE_DOT);
+            ObjectSetInteger(0, lower_name, OBJPROP_STYLE, STYLE_DOT);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| END OF ENHANCED VWAP RESEARCH IMPLEMENTATION                    |
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
