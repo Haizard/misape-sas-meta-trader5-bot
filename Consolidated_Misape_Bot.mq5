@@ -833,7 +833,7 @@ int g_active_signal_count = 0;
 //+------------------------------------------------------------------+
 //| FUNCTION PROTOTYPES                                              |
 //+------------------------------------------------------------------+
-double CalculateEnhancedPatternConfidence(PatternConfidenceMatrix &matrix);
+double CalculateEnhancedPatternConfidence(PatternConfidenceMatrix &confidence_matrix);
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -9758,15 +9758,15 @@ double CalculatePatternConfidence(double pattern_size, double symmetry_ratio) {
 //+------------------------------------------------------------------+
 //| Enhanced Multi-Dimensional Pattern Confidence Calculation      |
 //+------------------------------------------------------------------+
-double CalculateEnhancedPatternConfidence(PatternConfidenceMatrix &matrix) {
+double CalculateEnhancedPatternConfidence(PatternConfidenceMatrix &confidence_matrix) {
     // Academic research-based weight distribution
     double weights[] = {0.3, 0.25, 0.2, 0.15, 0.1};
     double scores[] = {
-        matrix.geometric_accuracy,
-        matrix.volume_confirmation,
-        matrix.momentum_alignment,
-        matrix.market_context,
-        matrix.historical_success
+        confidence_matrix.geometric_accuracy,
+        confidence_matrix.volume_confirmation,
+        confidence_matrix.momentum_alignment,
+        confidence_matrix.market_context,
+        confidence_matrix.historical_success
     };
     
     double weighted_confidence = 0.0;
@@ -9897,14 +9897,14 @@ double CalculateMarketContext() {
 //+------------------------------------------------------------------+
 double CalculateProfessionalPatternConfidence(double pattern_size, double symmetry_ratio, bool volume_confirmed, bool additional_confirmation = false) {
     // Create confidence matrix for legacy function
-    PatternConfidenceMatrix matrix;
-    matrix.geometric_accuracy = CalculateGeometricAccuracy(CHART_PATTERN_HEAD_SHOULDERS, pattern_size, symmetry_ratio, 1.0);
-    matrix.volume_confirmation = CalculateVolumeConfirmation(volume_confirmed, 1.0);
-    matrix.momentum_alignment = CalculateMomentumAlignment(additional_confirmation);
-    matrix.market_context = CalculateMarketContext();
-    matrix.historical_success = 0.7; // Default historical performance
+    PatternConfidenceMatrix confidence_matrix;
+    confidence_matrix.geometric_accuracy = CalculateGeometricAccuracy(CHART_PATTERN_HEAD_SHOULDERS, pattern_size, symmetry_ratio, 1.0);
+    confidence_matrix.volume_confirmation = CalculateVolumeConfirmation(volume_confirmed, 1.0);
+    confidence_matrix.momentum_alignment = CalculateMomentumAlignment(additional_confirmation);
+    confidence_matrix.market_context = CalculateMarketContext();
+    confidence_matrix.historical_success = 0.7; // Default historical performance
     
-    return CalculateEnhancedPatternConfidence(matrix);
+    return CalculateEnhancedPatternConfidence(confidence_matrix);
 }
 
 bool AddPattern(DetectedPattern &pattern) {
